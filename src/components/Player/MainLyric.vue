@@ -67,9 +67,9 @@
                 </div>
               </div>
               <!-- 翻译 -->
-              <span v-if="item.tran" class="tran">{{ item.tran }}</span>
+              <span v-if="item.tran && settingStore.showTran" class="tran">{{ item.tran }}</span>
               <!-- 音译 -->
-              <span v-if="item.roma" class="roma">{{ item.roma }}</span>
+              <span v-if="item.roma && settingStore.showRoma" class="roma">{{ item.roma }}</span>
               <!-- 倒计时 -->
               <div
                 v-if="
@@ -115,9 +115,9 @@
               <!-- 歌词 -->
               <span class="content">{{ item.content }}</span>
               <!-- 翻译 -->
-              <span v-if="item.tran" class="tran">{{ item.tran }}</span>
+              <span v-if="item.tran && settingStore.showTran" class="tran">{{ item.tran }}</span>
               <!-- 音译 -->
-              <span v-if="item.roma" class="roma">{{ item.roma }}</span>
+              <span v-if="item.roma && settingStore.showRoma" class="roma">{{ item.roma }}</span>
             </div>
             <div class="placeholder" />
           </template>
@@ -571,8 +571,10 @@ onBeforeUnmount(() => {
       }
     }
   }
-  &.record,
   &.pure {
+    :deep(.n-scrollbar-content) {
+      padding: 0 80px;
+    }
     .lyric-content {
       .placeholder {
         &:first-child {
@@ -586,11 +588,6 @@ onBeforeUnmount(() => {
           transform: scale(0.9);
         }
       }
-    }
-  }
-  &.pure {
-    :deep(.n-scrollbar-content) {
-      padding: 0 80px;
     }
   }
   &:hover {

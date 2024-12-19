@@ -23,7 +23,10 @@ import { likePlaylist, playlistTracks } from "@/api/playlist";
 import { likeArtist } from "@/api/artist";
 import { radioSub } from "@/api/radio";
 
-// 是否登录
+/**
+ * 用户是否登录
+ * @returns 0 - 未登录 / 1 - 正常登录 / 2 - UID 登录
+ */
 export const isLogin = (): 0 | 1 | 2 => {
   const dataStore = useDataStore();
   if (dataStore.loginType === "uid") return 2;
@@ -33,7 +36,6 @@ export const isLogin = (): 0 | 1 | 2 => {
 // 退出登录
 export const toLogout = async () => {
   const dataStore = useDataStore();
-  // 退出登录
   await logout();
   // 去除 cookie
   removeCookie("MUSIC_U");
