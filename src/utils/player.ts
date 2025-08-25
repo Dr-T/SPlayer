@@ -12,7 +12,6 @@ import { heartRateList } from "@/api/playlist";
 import { formatSongsList } from "./format";
 import { isLogin } from "./auth";
 import { openUserLogin } from "./modal";
-import { scrobble } from "@/api/user";
 import { personalFm, personalFmToTrash } from "@/api/rec";
 import blob from "./blob";
 
@@ -40,6 +39,17 @@ class Player {
     this.player = new Howl({ src: [""], format: allowPlayFormat, autoplay: false });
     // 初始化媒体会话
     this.initMediaSession();
+  }
+  /**
+   * 洗牌数组（Fisher-Yates）
+   */
+  private shuffleArray<T>(arr: T[]): T[] {
+    const copy = arr.slice();
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
   }
   /**
    * 重置状态
@@ -168,12 +178,22 @@ class Player {
       const keyWord = songData.name + "-" + artist;
       if (!songId || !keyWord) return null;
       // 尝试解锁
-      const [neteaseUrl, kuwoUrl] = await Promise.all([
+      const results = await Promise.allSettled([
         unlockSongUrl(songId, keyWord, "netease"),
         unlockSongUrl(songId, keyWord, "kuwo"),
       ]);
-      if (neteaseUrl.code === 200 && neteaseUrl.url !== "") return neteaseUrl.url;
-      if (kuwoUrl.code === 200 && kuwoUrl.url !== "") return kuwoUrl.url;
+      // 解析结果
+      const [neteaseRes, kuwoRes] = results;
+      if (
+        neteaseRes.status === "fulfilled" &&
+        neteaseRes.value.code === 200 &&
+        neteaseRes.value.url
+      ) {
+        return neteaseRes.value.url;
+      }
+      if (kuwoRes.status === "fulfilled" && kuwoRes.value.code === 200 && kuwoRes.value.url) {
+        return kuwoRes.value.url;
+      }
       return null;
     } catch (error) {
       console.error("Error in getUnlockSongUrl", error);
@@ -241,14 +261,17 @@ class Player {
     // 获取数据
     const dataStore = useDataStore();
     const statusStore = useStatusStore();
+    const settingStore = useSettingStore();
     const playSongData = this.getPlaySongData();
     // 获取配置
     const { seek } = options;
     // 初次加载
     this.player.once("load", () => {
       // 允许跨域
-      const audioDom = this.getAudioDom();
-      audioDom.crossOrigin = "anonymous";
+      if (settingStore.showSpectrums) {
+        const audioDom = this.getAudioDom();
+        audioDom.crossOrigin = "anonymous";
+      }
       // 恢复进度（ 需距离本曲结束大于 2 秒 ）
       if (seek && statusStore.duration - statusStore.currentTime > 2) this.setSeek(seek);
       // 更新状态
@@ -644,8 +667,6 @@ class Player {
       const playListLength = playList.length;
       // 播放列表是否为空
       if (playListLength === 0) throw new Error("Play list is empty");
-      // 打卡
-      this.scrobbleSong();
       // 若为私人FM
       if (statusStore.personalFmMode) {
         await this.initPersonalFM(true);
@@ -657,18 +678,14 @@ class Player {
         this.setSeek(0);
         await this.play();
       }
-      // 列表循环或处于心动模式
-      if (playSongMode === "repeat" || playHeartbeatMode || playSong.type === "radio") {
+      // 列表循环或处于心动模式或随机模式
+      if (
+        playSongMode === "repeat" ||
+        playSongMode === "shuffle" ||
+        playHeartbeatMode ||
+        playSong.type === "radio"
+      ) {
         statusStore.playIndex += type === "next" ? 1 : -1;
-      }
-      // 随机播放
-      else if (playSongMode === "shuffle") {
-        let newIndex: number;
-        // 确保不会随机到同一首
-        do {
-          newIndex = Math.floor(Math.random() * playListLength);
-        } while (newIndex === statusStore.playIndex);
-        statusStore.playIndex = newIndex;
       }
       // 单曲循环
       else if (playSongMode === "repeat-once") {
@@ -698,28 +715,65 @@ class Player {
    * 切换播放模式
    * @param mode 播放模式 repeat / repeat-once / shuffle
    */
-  togglePlayMode(mode: PlayModeType | false) {
+  async togglePlayMode(mode: PlayModeType | false) {
     const statusStore = useStatusStore();
+    const dataStore = useDataStore();
+    const musicStore = useMusicStore();
     // 退出心动模式
     if (statusStore.playHeartbeatMode) this.toggleHeartMode(false);
-    // 若传入了指定模式
+    // 计算目标模式
+    let targetMode: PlayModeType;
     if (mode) {
-      statusStore.playSongMode = mode;
+      targetMode = mode;
     } else {
       switch (statusStore.playSongMode) {
         case "repeat":
-          statusStore.playSongMode = "repeat-once";
+          targetMode = "repeat-once";
           break;
         case "shuffle":
-          statusStore.playSongMode = "repeat";
+          targetMode = "repeat";
           break;
         case "repeat-once":
-          statusStore.playSongMode = "shuffle";
+          targetMode = "shuffle";
           break;
         default:
-          statusStore.playSongMode = "repeat";
+          targetMode = "repeat";
       }
     }
+    // 进入随机模式：保存原顺序并打乱当前歌单
+    if (targetMode === "shuffle" && statusStore.playSongMode !== "shuffle") {
+      const currentList = dataStore.playList;
+      if (currentList && currentList.length > 1) {
+        const currentSongId = musicStore.playSong?.id;
+        await dataStore.setOriginalPlayList(currentList);
+        const shuffled = this.shuffleArray(currentList);
+        await dataStore.setPlayList(shuffled);
+        if (currentSongId) {
+          const newIndex = shuffled.findIndex((s: any) => s?.id === currentSongId);
+          if (newIndex !== -1) useStatusStore().playIndex = newIndex;
+        }
+      }
+    }
+    // 离开随机模式：恢复到原顺序
+    if (
+      statusStore.playSongMode === "shuffle" &&
+      (targetMode === "repeat" || targetMode === "repeat-once")
+    ) {
+      const original = await dataStore.getOriginalPlayList();
+      if (original && original.length) {
+        const currentSongId = musicStore.playSong?.id;
+        await dataStore.setPlayList(original);
+        if (currentSongId) {
+          const origIndex = original.findIndex((s: any) => s?.id === currentSongId);
+          useStatusStore().playIndex = origIndex !== -1 ? origIndex : 0;
+        } else {
+          useStatusStore().playIndex = 0;
+        }
+        await dataStore.clearOriginalPlayList();
+      }
+    }
+    // 应用模式
+    statusStore.playSongMode = targetMode;
     this.playModeSyncIpc();
   }
   /**
@@ -850,9 +904,7 @@ class Player {
     const musicStore = useMusicStore();
     const statusStore = useStatusStore();
     // 获取配置
-    const { showTip, scrobble, play } = options;
-    // 打卡
-    if (scrobble) this.scrobbleSong();
+    const { showTip, play } = options;
     // 更新列表
     await dataStore.setPlayList(cloneDeep(data));
     // 关闭特殊模式
@@ -1104,29 +1156,6 @@ class Player {
       window.$message.error("心动模式开启出错，请重试");
     } finally {
       this.message?.destroy();
-    }
-  }
-  /**
-   * 听歌打卡
-   */
-  async scrobbleSong() {
-    const musicStore = useMusicStore();
-    const statusStore = useStatusStore();
-    const settingStore = useSettingStore();
-    try {
-      if (!isLogin()) return;
-      if (!settingStore.scrobbleSong) return;
-      // 获取所需数据
-      const playSongData = this.getPlaySongData();
-      if (!playSongData) return;
-      const { id, name } = playSongData;
-      const sourceid = musicStore.playPlaylistId;
-      const time = statusStore.duration;
-      // 网易云打卡
-      console.log("打卡：", id, name, sourceid, time);
-      await scrobble(id, sourceid, time);
-    } catch (error) {
-      console.error("Failed to scrobble song:", error);
     }
   }
   /**

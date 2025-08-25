@@ -17,7 +17,7 @@ import { Thumbar } from "./thumbar";
 import { StoreType } from "./store";
 import { isDev, getFileID, getFileMD5 } from "./utils";
 import { isShortcutRegistered, registerShortcut, unregisterShortcuts } from "./shortcut";
-import { join, basename, resolve } from "path";
+import { join, basename, resolve, relative, isAbsolute } from "path";
 import { download } from "electron-dl";
 import { checkUpdate, startDownloadUpdate } from "./update";
 import fs from "fs/promises";
@@ -173,8 +173,11 @@ const initWinIpcMain = (
   // 遍历音乐文件
   ipcMain.handle("get-music-files", async (_, dirPath: string) => {
     try {
+      // 规范化路径
+      const filePath = resolve(dirPath).replace(/\\/g, "/");
+      console.info(`📂 Fetching music files from: ${filePath}`);
       // 查找指定目录下的所有音乐文件
-      const musicFiles = await fg("**/*.{mp3,wav,flac}", { cwd: dirPath });
+      const musicFiles = await fg("**/*.{mp3,wav,flac}", { cwd: filePath });
       // 解析元信息
       const metadataPromises = musicFiles.map(async (file) => {
         const filePath = join(dirPath, file);
@@ -214,18 +217,19 @@ const initWinIpcMain = (
   // 获取音乐元信息
   ipcMain.handle("get-music-metadata", async (_, path: string) => {
     try {
-      const { common, format } = await parseFile(path);
+      const filePath = resolve(path).replace(/\\/g, "/");
+      const { common, format } = await parseFile(filePath);
       return {
         // 文件名称
-        fileName: basename(path),
+        fileName: basename(filePath),
         // 文件大小
-        fileSize: (await fs.stat(path)).size / (1024 * 1024),
+        fileSize: (await fs.stat(filePath)).size / (1024 * 1024),
         // 元信息
         common,
         // 音质信息
         format,
         // md5
-        md5: await getFileMD5(path),
+        md5: await getFileMD5(filePath),
       };
     } catch (error) {
       log.error("❌ Error fetching music metadata:", error);
@@ -236,24 +240,19 @@ const initWinIpcMain = (
   // 获取音乐歌词
   ipcMain.handle("get-music-lyric", async (_, path: string): Promise<string> => {
     try {
-      const { common, native } = await parseFile(path);
+      const filePath = resolve(path).replace(/\\/g, "/");
+      const { common } = await parseFile(filePath);
       const lyric = common?.lyrics;
       if (lyric && lyric.length > 0) return String(lyric[0]);
+      // 如果歌词数据不存在，尝试读取同名的 lrc 文件
       else {
-        // 尝试读取 UNSYNCEDLYRICS
-        const nativeTags = native["ID3v2.3"] || native["ID3v2.4"];
-        const usltTag = nativeTags?.find((tag) => tag.id === "USLT");
-        if (usltTag) return String(usltTag.value.text);
-        // 如果歌词数据不存在，尝试读取同名的 lrc 文件
-        else {
-          const lrcFilePath = path.replace(/\.[^.]+$/, ".lrc");
-          try {
-            await fs.access(lrcFilePath);
-            const lrcData = await fs.readFile(lrcFilePath, "utf-8");
-            return lrcData || "";
-          } catch {
-            return "";
-          }
+        const lrcFilePath = filePath.replace(/\.[^.]+$/, ".lrc");
+        try {
+          await fs.access(lrcFilePath);
+          const lrcData = await fs.readFile(lrcFilePath, "utf-8");
+          return lrcData || "";
+        } catch {
+          return "";
         }
       }
     } catch (error) {
@@ -622,6 +621,16 @@ const initLyricIpcMain = (
     } else {
       lyricWin.setIgnoreMouseEvents(false);
     }
+  });
+
+  // 检查是否是子文件夹
+  ipcMain.handle("check-if-subfolder", (_, localFilesPath: string[], selectedDir: string) => {
+    const resolvedSelectedDir = resolve(selectedDir);
+    const allPaths = localFilesPath.map((p) => resolve(p));
+    return allPaths.some((existingPath) => {
+      const relativePath = relative(existingPath, resolvedSelectedDir);
+      return relativePath && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+    });
   });
 };
 
