@@ -1,0 +1,67 @@
+# Dev 分支推送部署预览
+## 部署 Windows x64 和 ARM64 版本
+name: Build Dev
+
+on:
+  push:
+    branches:
+      - dev
+
+env:
+  NODE_VERSION: 22.x
+  PNPM_VERSION: 8
+
+jobs:
+  # Windows x64 架构
+  build-win:
+    name: Build Electron App for Windows
+    runs-on: windows-latest
+
+    steps:
+      # 检出 Git 仓库
+      - name: Check out git repository
+        uses: actions/checkout@v4
+      # 设置 pnpm 版本
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      # 安装 Node.js
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+      # 复制环境变量文件
+      - name: Copy .env.example
+        run: |
+          if (-not (Test-Path .env)) {
+            Copy-Item .env.example .env
+          } else {
+            Write-Host ".env file already exists. Skipping the copy step."
+          }
+      # 安装项目依赖
+      - name: Install Dependencies
+        run: pnpm install
+      # 清理旧的构建产物
+      - name: Clean dist folder
+        run: |
+          if (Test-Path dist) {
+            Remove-Item -Recurse -Force dist
+          }
+      # 构建 Electron App (x64)
+      - name: Build Electron App for Windows x64
+        # 仅 x64
+        run: pnpm run build:win -- --arch=x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 清理不必要的构建产物（保留 .exe 和 .blockmap 文件）
+      - name: Cleanup Artifacts
+        run: npx del-cli "dist/**/*.yaml" "dist/**/*.yml"
+      # 上传构建产物（仅上传 x64 架构的 .exe 文件）
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SPlayer-dev
+          path: |
+            dist/**.exe

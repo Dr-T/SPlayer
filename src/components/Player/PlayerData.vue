@@ -3,24 +3,28 @@
     <!-- 名称 -->
     <div class="name">
       <span class="name-text text-hidden">{{ musicStore.playSong.name || "未知曲目" }}</span>
-      <n-popover v-if="statusStore.playUblock" :show-arrow="false" placement="right-start" raw>
-        <template #trigger>
-          <SvgIcon :depth="3" name="CloudLockOpen" size="22" />
-        </template>
-        <div
-          :style="{
-            '--theme': theme,
-          }"
-          class="player-tip"
-        >
-          <span>该歌曲暂时无法播放，为您采用其他音源，可能会与原曲存在差别</span>
-        </div>
-      </n-popover>
-      <!-- 云盘歌曲 -->
-      <SvgIcon v-if="musicStore.playSong.pc" :depth="3" name="Cloud" size="22" />
+      <!-- 额外信息 -->
+      <div v-if="statusStore.playUblock || musicStore.playSong.pc" class="extra-info">
+        <n-popover :show-arrow="false" placement="right" raw>
+          <template #trigger>
+            <SvgIcon
+              :depth="3"
+              :name="musicStore.playSong.pc ? 'Cloud' : 'CloudLockOpen'"
+              size="22"
+            />
+          </template>
+          <div :style="{ '--theme': theme }" class="player-tip">
+            {{
+              musicStore.playSong.pc
+                ? "云盘歌曲，由用户上传"
+                : "该歌曲暂时无法播放，为您采用其他音源，可能会与原曲存在差别"
+            }}
+          </div>
+        </n-popover>
+      </div>
     </div>
     <!-- 别名 -->
-    <span v-if="musicStore.playSong.alia" class="alia">
+    <span v-if="musicStore.playSong.alia" class="alia text-hidden">
       {{ musicStore.playSong.alia }}
     </span>
     <!-- 歌手 -->
@@ -113,6 +117,7 @@ const jumpPage = debounce(
     color: rgb(var(--main-color));
   }
   .name {
+    position: relative;
     display: flex;
     align-items: center;
     margin-left: 4px;
@@ -132,6 +137,8 @@ const jumpPage = debounce(
     margin: 6px 0 6px 2px;
     opacity: 0.6;
     font-size: 18px;
+    line-clamp: 1;
+    -webkit-line-clamp: 1;
   }
   .artists {
     margin-top: 2px;
@@ -181,8 +188,8 @@ const jumpPage = debounce(
     .name-text {
       opacity: 0.7;
       transition: opacity 0.3s;
-      line-clamp: 2;
-      -webkit-line-clamp: 2;
+      line-clamp: 1;
+      -webkit-line-clamp: 1;
       cursor: pointer;
       &:hover {
         opacity: 1;
@@ -196,6 +203,13 @@ const jumpPage = debounce(
       .name-text {
         font-size: 30px;
       }
+      .extra-info {
+        position: absolute;
+        right: -34px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
     }
   }
   &.center {
@@ -207,7 +221,7 @@ const jumpPage = debounce(
   }
 }
 .player-tip {
-  width: 240px;
+  max-width: 240px;
   padding: 12px 20px;
   border-radius: 12px;
   color: rgb(var(--theme));

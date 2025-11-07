@@ -202,6 +202,18 @@
             class="set"
           />
         </n-card>
+        <n-card class="set-item">
+          <div class="label">
+            <n-text class="name">显示长音发光效果</n-text>
+            <n-text class="tip" :depth="3"> 当单词持续时间过长时显示发光效果 </n-text>
+          </div>
+          <n-switch
+            v-model:value="settingStore.showYrcLongEffect"
+            :disabled="settingStore.useAMLyrics || !settingStore.showYrcAnimation"
+            :round="false"
+            class="set"
+          />
+        </n-card>
       </n-collapse-transition>
       <n-card class="set-item">
         <div class="label">
@@ -234,11 +246,45 @@
       </n-card>
       <n-card class="set-item">
         <div class="label">
-          <n-text class="name">歌词排除内容</n-text>
-          <n-text class="tip" :depth="3"> 歌词中包含的关键词将不会显示 </n-text>
+          <n-text class="name">启用歌词排除</n-text>
+          <n-text class="tip" :depth="3">
+            开启后可配置排除歌词，包含关键词或匹配正则表达式的歌词行将不会显示
+          </n-text>
         </div>
-        <n-button type="primary" strong secondary @click="openLyricExclude">配置</n-button>
+        <n-switch v-model:value="settingStore.enableExcludeLyrics" class="set" :round="false" />
       </n-card>
+      <n-collapse-transition :show="settingStore.enableExcludeLyrics">
+        <n-card class="set-item">
+          <div class="label">
+            <n-text class="name">TTML 歌词排除</n-text>
+            <n-text class="tip" :depth="3">
+              是否要对 TTML 歌词进行歌词排除 <br />
+              AMLL TTML DB 对此有硬性规定，不得包含作词、作曲等歌词无关内容，因此大多情况下无需开启
+            </n-text>
+          </div>
+          <n-switch v-model:value="settingStore.enableExcludeTTML" class="set" :round="false" />
+        </n-card>
+        <n-card class="set-item">
+          <div class="label">
+            <n-text class="name">本地歌词排除</n-text>
+            <n-text class="tip" :depth="3">
+              是否要对来自本地的歌词进行歌词排除，这包含本地覆盖的在线歌词和本地歌曲中的歌词
+            </n-text>
+          </div>
+          <n-switch
+            v-model:value="settingStore.enableExcludeLocalLyrics"
+            class="set"
+            :round="false"
+          />
+        </n-card>
+        <n-card class="set-item">
+          <div class="label">
+            <n-text class="name">歌词排除内容</n-text>
+            <n-text class="tip" :depth="3"> 包含关键词或匹配正则表达式的歌词行将不会显示 </n-text>
+          </div>
+          <n-button type="primary" strong secondary @click="openLyricExclude">配置</n-button>
+        </n-card>
+      </n-collapse-transition>
     </div>
     <div class="set-list">
       <n-h3 prefix="bar"> Apple Music-like Lyrics </n-h3>
@@ -260,6 +306,16 @@
         </div>
         <n-switch v-model:value="settingStore.useAMSpring" class="set" :round="false" />
       </n-card>
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">启用在线 TTML 歌词</n-text>
+          <n-text class="tip" :depth="3">
+            是否从 AMLL TTML DB 获取歌词（如有），TTML
+            歌词支持逐字、翻译、音译等功能，将会在下一首歌生效
+          </n-text>
+        </div>
+        <n-switch v-model:value="settingStore.enableTTMLLyric" class="set" :round="false" />
+      </n-card>
     </div>
     <div v-if="isElectron" class="set-list">
       <n-h3 prefix="bar"> 桌面歌词 </n-h3>
@@ -277,16 +333,112 @@
       </n-card>
       <n-card class="set-item">
         <div class="label">
-          <n-text class="name">桌面歌词文字大小</n-text>
+          <n-text class="name">锁定桌面歌词位置</n-text>
+          <n-text class="tip" :depth="3">是否锁定桌面歌词位置，防止误触或遮挡内容</n-text>
+        </div>
+        <n-switch
+          v-model:value="desktopLyricConfig.isLock"
+          :round="false"
+          class="set"
+          @update:value="saveDesktopLyricConfig"
+        />
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">双行歌词</n-text>
+          <n-text class="tip" :depth="3">是否启用双行歌词，交替显示当前句和下一句</n-text>
+        </div>
+        <n-switch
+          v-model:value="desktopLyricConfig.isDoubleLine"
+          :round="false"
+          class="set"
+          @update:value="saveDesktopLyricConfig"
+        />
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">限制歌词位置</n-text>
+          <n-text class="tip" :depth="3">是否限制桌面歌词位置在当前屏幕内</n-text>
+        </div>
+        <n-switch
+          v-model:value="desktopLyricConfig.limitBounds"
+          :round="false"
+          class="set"
+          @update:value="saveDesktopLyricConfig"
+        />
+      </n-card>
+      <!-- position -->
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">对齐方式</n-text>
+          <n-text class="tip" :depth="3">桌面歌词对齐方式</n-text>
+        </div>
+        <n-select
+          v-model:value="desktopLyricConfig.position"
+          :options="[
+            { label: '左对齐', value: 'left' },
+            { label: '居中对齐', value: 'center' },
+            { label: '右对齐', value: 'right' },
+            { label: '左右分离', value: 'both' },
+          ]"
+          class="set"
+          @update:value="saveDesktopLyricConfig"
+        />
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">歌词字体</n-text>
+          <n-text class="tip" :depth="3"> 更改桌面歌词字体 </n-text>
+        </div>
+        <n-flex>
+          <Transition name="fade" mode="out-in">
+            <n-button
+              v-if="desktopLyricConfig.fontFamily !== 'system-ui'"
+              type="primary"
+              strong
+              secondary
+              @click="
+                () => {
+                  desktopLyricConfig.fontFamily = 'system-ui';
+                  saveDesktopLyricConfig();
+                }
+              "
+            >
+              恢复默认
+            </n-button>
+          </Transition>
+          <n-select
+            v-model:value="desktopLyricConfig.fontFamily"
+            :options="allFontsData"
+            class="set"
+            @update:value="saveDesktopLyricConfig"
+          />
+        </n-flex>
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">文字加粗</n-text>
+          <n-text class="tip" :depth="3">是否加粗桌面歌词文字</n-text>
+        </div>
+        <n-switch
+          v-model:value="desktopLyricConfig.fontIsBold"
+          :round="false"
+          class="set"
+          @update:value="saveDesktopLyricConfig"
+        />
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">文字大小</n-text>
           <n-text class="tip" :depth="3">翻译或其他文字将会跟随变化</n-text>
         </div>
         <n-select
           v-model:value="desktopLyricConfig.fontSize"
           :options="
-            Array.from({ length: 41 }, (_, i) => {
+            Array.from({ length: 96 - 20 + 1 }, (_, i) => {
               return {
-                label: `${10 + i} px`,
-                value: 10 + i,
+                label: `${20 + i} px`,
+                value: 20 + i,
               };
             })
           "
@@ -296,11 +448,24 @@
       </n-card>
       <n-card class="set-item">
         <div class="label">
-          <n-text class="name">主题色</n-text>
-          <n-text class="tip" :depth="3">桌面歌词文字主色</n-text>
+          <n-text class="name">已播放文字</n-text>
+          <n-text class="tip" :depth="3">桌面歌词已播放文字颜色</n-text>
         </div>
         <n-color-picker
-          v-model:value="desktopLyricConfig.mainColor"
+          v-model:value="desktopLyricConfig.playedColor"
+          :show-alpha="false"
+          :modes="['hex']"
+          class="set"
+          @complete="saveDesktopLyricConfig"
+        />
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">未播放文字</n-text>
+          <n-text class="tip" :depth="3">桌面歌词未播放文字颜色</n-text>
+        </div>
+        <n-color-picker
+          v-model:value="desktopLyricConfig.unplayedColor"
           :show-alpha="false"
           :modes="['hex']"
           class="set"
@@ -333,28 +498,28 @@
 <script setup lang="ts">
 import { useSettingStore, useStatusStore } from "@/stores";
 import { cloneDeep, isEqual } from "lodash-es";
-import { isElectron } from "@/utils/helper";
-import player from "@/utils/player";
+import { isElectron } from "@/utils/env";
 import { openLyricExclude } from "@/utils/modal";
+import { LyricConfig } from "@/types/desktop-lyric";
+import defaultDesktopLyricConfig from "@/assets/data/lyricConfig";
+import player from "@/utils/player";
+import { SelectOption } from "naive-ui";
 
 const statusStore = useStatusStore();
 const settingStore = useSettingStore();
 
+// 全部字体
+const allFontsData = ref<SelectOption[]>([]);
+
 // 桌面歌词配置
-const defaultDesktopLyricConfig = {
-  fontSize: 30,
-  mainColor: "#fff",
-  shadowColor: "rgba(0, 0, 0, 0.5)",
-};
-const desktopLyricConfig = reactive({ ...defaultDesktopLyricConfig });
+const desktopLyricConfig = reactive<LyricConfig>({ ...defaultDesktopLyricConfig });
 
 // 获取桌面歌词配置
 const getDesktopLyricConfig = async () => {
-  if (!isElectron) return;
-  const config = await window.electron.ipcRenderer.invoke("get-desktop-lyric-option");
+  const config = await window.electron.ipcRenderer.invoke("request-desktop-lyric-option");
   if (config) Object.assign(desktopLyricConfig, config);
   // 监听更新
-  window.electron.ipcRenderer.on("desktop-lyric-option-change", (_, config) => {
+  window.electron.ipcRenderer.on("update-desktop-lyric-option", (_, config) => {
     if (config && !isEqual(desktopLyricConfig, config)) {
       Object.assign(desktopLyricConfig, config);
     }
@@ -367,7 +532,7 @@ const saveDesktopLyricConfig = () => {
     if (!isElectron) return;
     console.log(cloneDeep(desktopLyricConfig));
     window.electron.ipcRenderer.send(
-      "set-desktop-lyric-option",
+      "update-desktop-lyric-option",
       cloneDeep(desktopLyricConfig),
       true,
     );
@@ -383,7 +548,11 @@ const saveDesktopLyricConfig = () => {
 const restoreDesktopLyricConfig = () => {
   try {
     if (!isElectron) return;
-    window.electron.ipcRenderer.send("set-desktop-lyric-option", defaultDesktopLyricConfig, true);
+    window.electron.ipcRenderer.send(
+      "update-desktop-lyric-option",
+      defaultDesktopLyricConfig,
+      true,
+    );
     window.$message.success("桌面歌词配置已恢复默认");
     console.log(defaultDesktopLyricConfig, desktopLyricConfig);
   } catch (error) {
@@ -393,8 +562,35 @@ const restoreDesktopLyricConfig = () => {
   }
 };
 
+// 获取全部系统字体
+const getAllSystemFonts = async () => {
+  const allFonts = await window.electron.ipcRenderer.invoke("get-all-fonts");
+  allFonts.map((v: string) => {
+    // 去除前后的引号
+    v = v.replace(/^['"]+|['"]+$/g, "");
+    allFontsData.value.push({
+      label: v,
+      value: v,
+      style: {
+        fontFamily: v,
+      },
+    });
+  });
+  // 添加默认选项
+  allFontsData.value.unshift({
+    label: "系统默认",
+    value: "system-ui",
+    style: {
+      fontFamily: "system-ui",
+    },
+  });
+};
+
 onMounted(() => {
-  getDesktopLyricConfig();
+  if (isElectron) {
+    getDesktopLyricConfig();
+    getAllSystemFonts();
+  }
 });
 </script>
 

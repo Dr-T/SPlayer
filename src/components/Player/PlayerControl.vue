@@ -24,6 +24,14 @@
           <div class="menu-icon" @click.stop="openDownloadSong(musicStore.playSong)">
             <SvgIcon name="Download" />
           </div>
+          <!-- 显示评论 -->
+          <div
+            v-if="!musicStore.playSong.path && !statusStore.pureLyricMode"
+            class="menu-icon"
+            @click.stop="statusStore.showPlayerComment = !statusStore.showPlayerComment"
+          >
+            <SvgIcon :depth="statusStore.showPlayerComment ? 1 : 3" name="Message" />
+          </div>
         </n-flex>
         <div class="center">
           <div class="btn">
@@ -84,46 +92,8 @@
           </div>
         </div>
         <n-flex class="right" align="center" justify="end">
-          <!-- 显示评论 -->
-          <div
-            v-if="!musicStore.playSong.path && !statusStore.pureLyricMode"
-            class="menu-icon"
-            @click.stop="statusStore.showPlayerComment = !statusStore.showPlayerComment"
-          >
-            <SvgIcon :depth="statusStore.showPlayerComment ? 1 : 3" name="Message" />
-          </div>
-          <!-- 播放模式 -->
-          <div class="menu-icon" @click.stop="player.togglePlayMode(false)">
-            <SvgIcon :name="statusStore.playModeIcon" />
-          </div>
-          <!-- 音量调节 -->
-          <n-popover :show-arrow="false" :style="{ '--main-color': statusStore.mainColor }" raw>
-            <template #trigger>
-              <div class="menu-icon" @click.stop="player.toggleMute" @wheel="player.setVolume">
-                <SvgIcon :name="statusStore.playVolumeIcon" />
-              </div>
-            </template>
-            <div class="volume-change" @wheel="player.setVolume">
-              <n-slider
-                v-model:value="statusStore.playVolume"
-                :tooltip="false"
-                :min="0"
-                :max="1"
-                :step="0.01"
-                vertical
-                @update:value="(val) => player.setVolume(val)"
-              />
-              <n-text class="slider-num">{{ statusStore.playVolumePercent }}%</n-text>
-            </div>
-          </n-popover>
-          <!-- 播放列表 -->
-          <div
-            v-if="!statusStore.personalFmMode"
-            class="menu-icon"
-            @click.stop="statusStore.playListShow = !statusStore.playListShow"
-          >
-            <SvgIcon name="PlayList" />
-          </div>
+          <!-- 功能区 -->
+          <PlayerRightMenu player />
         </n-flex>
       </div>
     </Transition>
@@ -170,7 +140,7 @@ const sliderDragend = () => {
     height: 100%;
     padding: 0 30px;
     transition: opacity 0.3s;
-    .menu-icon {
+    :deep(.menu-icon) {
       display: flex;
       align-items: center;
       justify-content: center;
@@ -192,6 +162,12 @@ const sliderDragend = () => {
         transform: scale(1);
       }
     }
+    :deep(.n-badge-sup) {
+      background-color: rgba(var(--main-color), 0.14);
+      .n-base-slot-machine {
+        color: rgb(var(--main-color));
+      }
+    }
   }
   .center {
     height: 100%;
@@ -211,6 +187,7 @@ const sliderDragend = () => {
         width: 38px;
         height: 38px;
         border-radius: 50%;
+        will-change: transform;
         transition:
           backdrop-filter 0.3s,
           background-color 0.3s,
@@ -278,22 +255,6 @@ const sliderDragend = () => {
     .right {
       opacity: 1;
     }
-  }
-}
-// volume
-.volume-change {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 64px;
-  height: 200px;
-  padding: 12px 16px;
-  backdrop-filter: blur(10px);
-  background-color: rgba(var(--main-color), 0.14);
-  .slider-num {
-    margin-top: 4px;
-    font-size: 12px;
-    color: rgb(var(--main-color));
   }
 }
 // slider

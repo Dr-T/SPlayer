@@ -11,6 +11,7 @@
     <s-image
       :key="musicStore.getSongCover()"
       :src="musicStore.getSongCover('l')"
+      :observe-visibility="false"
       class="cover-img"
     />
     <!-- 动态封面 -->
@@ -146,7 +147,8 @@ onMounted(getDynamicCover);
       animation-play-state: paused;
       border-radius: 50%;
       border: 1vh solid #ffffff30;
-      background: linear-gradient(black 0%, transparent, black 98%),
+      background:
+        linear-gradient(black 0%, transparent, black 98%),
         radial-gradient(
           #000 52%,
           #555,

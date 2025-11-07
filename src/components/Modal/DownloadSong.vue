@@ -67,10 +67,11 @@ import { useSettingStore } from "@/stores";
 import { songLevelData, getLevelsUpTo } from "@/utils/meta";
 import { formatSongsList } from "@/utils/format";
 import { cloneDeep, reduce } from "lodash-es";
-import { formatFileSize, isElectron } from "@/utils/helper";
+import { formatFileSize } from "@/utils/helper";
+import { getPlayerInfo } from "@/utils/player-utils/song";
 import { openSetting } from "@/utils/modal";
 import { saveAs } from "file-saver";
-import player from "@/utils/player";
+import { isElectron } from "@/utils/env";
 
 const props = defineProps<{ id: number }>();
 const emit = defineEmits<{ close: [] }>();
@@ -156,7 +157,7 @@ const download = async () => {
     }
     // 下载相关数据
     const { url, type = "mp3" } = result.data;
-    const songName = player.getPlayerInfo(songData.value) || "未知曲目";
+    const songName = getPlayerInfo(songData.value) || "未知曲目";
     // 区分设备下载
     if (isElectron) {
       await electronDownload(url, songName, type.toLowerCase());

@@ -55,6 +55,9 @@
             <n-tag v-if="song.originCoverType === 1" :bordered="false" type="primary" round>
               原
             </n-tag>
+            <n-tag v-if="song.originCoverType === 2" :bordered="false" type="info" round>
+              翻唱
+            </n-tag>
             <n-tag v-if="song.free === 1" :bordered="false" type="error" round> VIP </n-tag>
             <n-tag v-if="song.free === 4" :bordered="false" type="error" round> EP </n-tag>
             <!-- 云盘 -->
@@ -150,13 +153,14 @@
 <script setup lang="ts">
 import type { SongType } from "@/types/main";
 import { useStatusStore, useMusicStore, useDataStore } from "@/stores";
-import { formatNumber, isElectron } from "@/utils/helper";
+import { formatNumber } from "@/utils/helper";
 import { openJumpArtist } from "@/utils/modal";
 import { toLikeSong } from "@/utils/auth";
 import { isObject } from "lodash-es";
 import { formatTimestamp, msToTime } from "@/utils/time";
 import player from "@/utils/player";
 import blob from "@/utils/blob";
+import { isElectron } from "@/utils/env";
 
 const props = defineProps<{
   // 歌曲
