@@ -124,7 +124,7 @@ const hideOrClose = (action: "hide" | "exit") => {
     settingStore.closeAppMethod = action;
   }
   showCloseModal.value = false;
-  window.electron.ipcRenderer.send(action === "hide" ? "win-hide" : "win-close");
+  window.electron.ipcRenderer.send(action === "hide" ? "win-hide" : "quit-app");
 };
 
 // 尝试关闭软件
@@ -155,7 +155,7 @@ const setOptions = computed<DropdownOption[]>(() => [
     ),
   },
   {
-    key: "header-divider",
+    key: "divider-1",
     type: "divider",
   },
   {
@@ -163,7 +163,7 @@ const setOptions = computed<DropdownOption[]>(() => [
     key: "restart",
     label: "软件热重载",
     show: isElectron,
-    props: { onClick: () => window.location.reload() },
+    props: { onClick: () => window.electron.ipcRenderer.send("win-reload") },
     icon: renderIcon("Restart"),
   },
   {

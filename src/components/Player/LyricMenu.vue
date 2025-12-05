@@ -1,12 +1,16 @@
 <template>
   <n-flex class="menu" justify="center" vertical>
-    <div class="menu-icon" @click="changeOffset(-0.5)">
+    <div class="menu-icon" @click="openCopyLyrics">
+      <SvgIcon name="Copy" />
+    </div>
+    <div class="divider" />
+    <div class="menu-icon" @click="changeOffset(-500)">
       <SvgIcon name="Replay5" />
     </div>
     <span class="time" @click="resetOffset()">
       {{ currentTimeOffsetValue }}
     </span>
-    <div class="menu-icon" @click="changeOffset(0.5)">
+    <div class="menu-icon" @click="changeOffset(500)">
       <SvgIcon name="Forward5" />
     </div>
     <div class="divider" />
@@ -18,7 +22,7 @@
 
 <script setup lang="ts">
 import { useMusicStore, useStatusStore } from "@/stores";
-import { openSetting } from "@/utils/modal";
+import { openSetting, openCopyLyrics } from "@/utils/modal";
 
 const musicStore = useMusicStore();
 const statusStore = useStatusStore();
@@ -29,16 +33,18 @@ const statusStore = useStatusStore();
 const currentSongId = computed(() => musicStore.playSong?.id as number | undefined);
 
 /**
- * 当前进度偏移值
+ * 当前进度偏移值（显示为秒，保留1位小数）
  */
 const currentTimeOffsetValue = computed(() => {
   const currentTimeOffset = statusStore.getSongOffset(currentSongId.value);
-  return currentTimeOffset > 0 ? `+${currentTimeOffset}` : currentTimeOffset;
+  // 将毫秒转换为秒显示（保留1位小数）
+  const offsetSeconds = (currentTimeOffset / 1000).toFixed(1);
+  return currentTimeOffset > 0 ? `+${offsetSeconds}` : offsetSeconds;
 });
 
 /**
  * 改变进度偏移
- * @param delta 偏移量
+ * @param delta 偏移量（单位：毫秒）
  */
 const changeOffset = (delta: number) => {
   statusStore.incSongOffset(currentSongId.value, delta);

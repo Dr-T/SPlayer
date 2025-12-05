@@ -1,18 +1,31 @@
 import { app, BrowserWindow } from "electron";
 import { electronApp } from "@electron-toolkit/utils";
-import { release, type } from "os";
 import { isMac } from "./utils/config";
+import { initSingleLock } from "./utils/single-lock";
 import { unregisterShortcuts } from "./shortcut";
 import { initTray, MainTray } from "./tray";
 import { processLog } from "./logger";
+import { existsSync, mkdirSync } from "fs";
+import { join } from "path";
 import initAppServer from "../server";
-import { initSingleLock } from "./utils/single-lock";
 import loadWindow from "./windows/load-window";
 import mainWindow from "./windows/main-window";
 import initIpc from "./ipc";
+import { trySendCustomProtocol } from "./utils/protocol";
 
 // 屏蔽报错
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
+
+// 便携模式下设置用户数据路径
+if (process.env.PORTABLE_EXECUTABLE_DIR) {
+  processLog.info(
+    "🔍 Portable mode detected, setting userData path to:",
+    join(process.env.PORTABLE_EXECUTABLE_DIR, "UserData"),
+  );
+  const userDataPath = join(process.env.PORTABLE_EXECUTABLE_DIR, "UserData");
+  if (!existsSync(userDataPath)) mkdirSync(userDataPath, { recursive: true });
+  app.setPath("userData", userDataPath);
+}
 
 // 主进程
 class MainProcess {
@@ -27,12 +40,10 @@ class MainProcess {
     processLog.info("🚀 Main process startup");
     // 程序单例锁
     initSingleLock();
-    // 禁用 Windows 7 的 GPU 加速功能
-    if (release().startsWith("6.1") && type() == "Windows_NT") app.disableHardwareAcceleration();
     // 监听应用事件
     this.handleAppEvents();
     // Electron 初始化完成后
-    // 某些API只有在此事件发生后才能使用
+    // 某些 API 只有在此事件发生后才能使用
     app.whenReady().then(async () => {
       processLog.info("🚀 Application Process Startup");
       // 设置应用程序名称
@@ -67,7 +78,8 @@ class MainProcess {
 
     // 自定义协议
     app.on("open-url", (_, url) => {
-      processLog.log("Received custom protocol URL:", url);
+      processLog.log("🔗 Received custom protocol URL:", url);
+      trySendCustomProtocol(url);
     });
 
     // 将要退出

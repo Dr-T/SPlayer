@@ -50,10 +50,12 @@
         <n-flex justify="space-between">
           <div class="label">
             <n-text class="name">本地歌词覆盖在线歌词</n-text>
-            <n-text class="tip" :depth="3"
-              >可在这些文件夹内覆盖在线歌曲的歌词，将歌词文件命名为 `歌曲ID.后缀名` 即可，支持 LRC
-              和 TTML 格式</n-text
-            >
+            <n-text class="tip" :depth="3">
+              可在这些文件夹及其子文件夹内覆盖在线歌曲的歌词 <br />
+              将歌词文件命名为 `歌曲ID.后缀名` 或者 `任意前缀.歌曲ID.后缀名` 即可 <br />
+              支持 .lrc 和 .ttml 格式 <br />
+              （提示：可以在前缀加上歌名等信息，也可以利用子文件夹分类管理）
+            </n-text>
           </div>
           <n-button strong secondary @click="changeLocalLyricPath()">
             <template #icon>
@@ -111,6 +113,19 @@
       </n-card>
       <n-card class="set-item">
         <div class="label">
+          <n-text class="name">默认下载音质</n-text>
+          <n-text class="tip" :depth="3">
+            默认使用的音质，实际可用音质取决于账号权限和歌曲资源
+          </n-text>
+        </div>
+        <n-select
+          v-model:value="settingStore.downloadSongLevel"
+          :options="downloadQualityOptions"
+          class="set"
+        />
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
           <n-text class="name">下载歌曲元信息</n-text>
           <n-text class="tip" :depth="3">为当前下载歌曲附加封面及歌词等元信息</n-text>
         </div>
@@ -142,6 +157,71 @@
       </n-card>
       <n-card class="set-item">
         <div class="label">
+          <n-text class="name">同时下载歌词翻译</n-text>
+          <n-text class="tip" :depth="3">下载歌词时同时包含翻译</n-text>
+        </div>
+        <n-switch
+          v-model:value="settingStore.downloadLyricTranslation"
+          :disabled="!settingStore.downloadMeta || !settingStore.downloadLyric"
+          :round="false"
+          class="set"
+        />
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">同时下载歌词音译</n-text>
+          <n-text class="tip" :depth="3">下载歌词时同时包含音译（罗马音）</n-text>
+        </div>
+        <n-switch
+          v-model:value="settingStore.downloadLyricRomaji"
+          :disabled="!settingStore.downloadMeta || !settingStore.downloadLyric"
+          :round="false"
+          class="set"
+        />
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">音乐命名格式</n-text>
+          <n-text class="tip" :depth="3">
+            选择下载文件的命名方式，建议包含歌手信息便于区分
+          </n-text>
+        </div>
+        <n-select
+          v-model:value="settingStore.fileNameFormat"
+          :options="fileNameFormatOptions"
+          class="set"
+        />
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">文件智能分类</n-text>
+          <n-text class="tip" :depth="3">
+            自动按歌手或歌手与专辑创建子文件夹进行分类
+          </n-text>
+        </div>
+        <n-select
+          v-model:value="settingStore.folderStrategy"
+          :options="folderStrategyOptions"
+          class="set"
+        />
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
+          <n-text class="name">
+            模拟播放下载
+            <n-tag type="warning" size="small" round>Beta</n-tag>
+          </n-text>
+          <n-text class="tip" :depth="3">使用播放接口进行下载，可能解决部分下载失败问题</n-text>
+        </div>
+        <n-switch
+          :value="settingStore.usePlaybackForDownload"
+          :round="false"
+          class="set"
+          @update:value="handlePlaybackDownloadChange"
+        />
+      </n-card>
+      <n-card class="set-item">
+        <div class="label">
           <n-text class="name">保留元信息文件</n-text>
           <n-text class="tip" :depth="3">是否在下载目录中保留元信息文件</n-text>
         </div>
@@ -157,15 +237,75 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from "vue";
 import { useSettingStore } from "@/stores";
 import { changeLocalLyricPath, changeLocalMusicPath } from "@/utils/helper";
+import { songLevelData, getSongLevelsData } from "@/utils/meta";
+import { pick } from "lodash-es";
 
 const settingStore = useSettingStore();
+
+// 默认下载音质选项
+const downloadQualityOptions = computed(() => {
+  const levels = pick(songLevelData, ["l", "m", "h", "sq", "hr", "je", "sk", "db", "jm"]);
+  return getSongLevelsData(levels).map((item) => ({
+    label: item.name,
+    value: item.value,
+  }));
+});
+
+const fileNameFormatOptions = [
+  {
+    label: "歌曲名",
+    value: "title",
+  },
+  {
+    label: "歌手 - 歌曲名",
+    value: "artist-title",
+  },
+  {
+    label: "歌曲名 - 歌手",
+    value: "title-artist",
+  },
+];
+
+const folderStrategyOptions = [
+  {
+    label: "不分文件夹",
+    value: "none",
+  },
+  {
+    label: "按歌手分文件夹",
+    value: "artist",
+  },
+  {
+    label: "按 歌手 \\ 专辑 分文件夹",
+    value: "artist-album",
+  },
+];
 
 // 选择下载路径
 const choosePath = async () => {
   const path = await window.electron.ipcRenderer.invoke("choose-path");
   if (path) settingStore.downloadPath = path;
+};
+
+// 模拟播放下载开关
+const handlePlaybackDownloadChange = (value: boolean) => {
+  if (value) {
+    window.$dialog.warning({
+      title: "开启提示",
+      content:
+        "模拟播放下载可能导致部分音质歌词嵌入异常且未经完整测试可能有不稳定情况，确认要打开吗？",
+      positiveText: "确认打开",
+      negativeText: "取消",
+      onPositiveClick: () => {
+        settingStore.usePlaybackForDownload = true;
+      },
+    });
+  } else {
+    settingStore.usePlaybackForDownload = false;
+  }
 };
 </script>
 

@@ -34,17 +34,13 @@
           </n-h2>
           <n-collapse-transition :show="!listScrolling" class="collapse">
             <!-- 简介 -->
-            <n-ellipsis
+            <n-text
               v-if="albumDetailData.description"
-              :line-clamp="1"
-              :tooltip="{
-                trigger: 'click',
-                placement: 'bottom',
-                width: 'trigger',
-              }"
+              class="description text-hidden"
+              @click="openDescModal(albumDetailData.description, '专辑简介')"
             >
               {{ albumDetailData.description }}
-            </n-ellipsis>
+            </n-text>
             <!-- 信息 -->
             <n-flex class="meta">
               <div class="item">
@@ -155,6 +151,7 @@
         :data="albumDataShow"
         :loading="loading"
         :height="songListHeight"
+        :doubleClickAction="searchData?.length ? 'add' : 'all'"
         hidden-album
         @scroll="listScroll"
       />
@@ -178,16 +175,17 @@ import type { DropdownOption } from "naive-ui";
 import { songDetail } from "@/api/song";
 import { albumDetail } from "@/api/album";
 import { formatCoverList, formatSongsList } from "@/utils/format";
-import { coverLoaded, fuzzySearch, renderIcon } from "@/utils/helper";
+import { coverLoaded, fuzzySearch, renderIcon, copyData } from "@/utils/helper";
 import { renderToolbar } from "@/utils/meta";
 import { useDataStore, useStatusStore } from "@/stores";
 import { debounce } from "lodash-es";
 import { formatTimestamp } from "@/utils/time";
-import { openJumpArtist } from "@/utils/modal";
-import player from "@/utils/player";
+import { openDescModal, openJumpArtist } from "@/utils/modal";
+import { usePlayer } from "@/utils/player";
 import { toLikeAlbum } from "@/utils/auth";
 
 const router = useRouter();
+const player = usePlayer();
 const dataStore = useDataStore();
 const statusStore = useStatusStore();
 
@@ -224,6 +222,18 @@ const songListHeight = computed(() => {
 
 // 更多操作
 const moreOptions = computed<DropdownOption[]>(() => [
+  {
+    label: "复制分享链接",
+    key: "copy",
+    props: {
+      onClick: () =>
+        copyData(
+          `https://music.163.com/#/album?id=${albumId.value}`,
+          "已复制分享链接到剪贴板",
+        ),
+    },
+    icon: renderIcon("Share"),
+  },
   {
     label: "打开源页面",
     key: "open",
@@ -378,7 +388,7 @@ onMounted(() => {
         border-radius: 8px;
         height: 32px;
       }
-      :deep(.n-ellipsis) {
+      .description {
         margin-bottom: 8px;
         cursor: pointer;
       }

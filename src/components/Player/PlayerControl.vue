@@ -76,19 +76,9 @@
           </div>
           <!-- 进度条 -->
           <div class="slider">
-            <span>{{ secondsToTime(statusStore.currentTime) }}</span>
-            <n-slider
-              v-model:value="statusStore.progress"
-              :step="0.01"
-              :min="0"
-              :max="100"
-              :tooltip="false"
-              :keyboard="false"
-              class="player-slider"
-              @dragstart="player.pause(false)"
-              @dragend="sliderDragend"
-            />
-            <span>{{ secondsToTime(statusStore.duration) }}</span>
+            <span>{{ msToTime(statusStore.currentTime) }}</span>
+            <PlayerSlider :show-tooltip="false" />
+            <span>{{ msToTime(statusStore.duration) }}</span>
           </div>
         </div>
         <n-flex class="right" align="center" justify="end">
@@ -102,23 +92,15 @@
 
 <script setup lang="ts">
 import { useMusicStore, useStatusStore, useDataStore } from "@/stores";
-import { secondsToTime, calculateCurrentTime } from "@/utils/time";
+import { msToTime } from "@/utils/time";
 import { openDownloadSong, openPlaylistAdd } from "@/utils/modal";
 import { toLikeSong } from "@/utils/auth";
-import player from "@/utils/player";
+import { usePlayer } from "@/utils/player";
 
+const player = usePlayer();
 const dataStore = useDataStore();
 const musicStore = useMusicStore();
 const statusStore = useStatusStore();
-
-// 进度条拖拽结束
-const sliderDragend = () => {
-  const seek = calculateCurrentTime(statusStore.progress, statusStore.duration);
-  statusStore.playStatus = true;
-  // 调整进度
-  player.setSeek(seek);
-  player.play();
-};
 </script>
 
 <style lang="scss" scoped>
@@ -189,7 +171,6 @@ const sliderDragend = () => {
         border-radius: 50%;
         will-change: transform;
         transition:
-          backdrop-filter 0.3s,
           background-color 0.3s,
           transform 0.3s;
         cursor: pointer;
@@ -198,7 +179,6 @@ const sliderDragend = () => {
         }
         &:hover {
           transform: scale(1.1);
-          backdrop-filter: blur(10px);
           background-color: rgba(var(--main-color), 0.14);
         }
         &:active {

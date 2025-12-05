@@ -1,6 +1,7 @@
-import type { SongType, CoverType, ArtistType, CommentType, MetaData, CatType } from "@/types/main";
+import { SongType, CoverType, ArtistType, CommentType, MetaData, CatType } from "@/types/main";
 import { msToTime } from "./time";
 import { flatMap, isArray, uniqBy } from "lodash-es";
+import { handleSongQuality } from "./helper";
 
 type CoverDataType = {
   cover: string;
@@ -67,7 +68,9 @@ export const formatSongsList = (data: any[]): SongType[] => {
       size: Number(item.size || 0),
       path: item.path,
       pc: !!item.pc,
-      quality: item?.quality,
+      quality: item?.path
+        ? handleSongQuality(item.quality, "local")
+        : handleSongQuality(item, "online"),
       playCount: Number(item.playCount || item.listenerCount || 0),
       createTime: Number(item.createTime || item.publishTime) || undefined,
       updateTime: Number(item.lastProgramCreateTime || item.scheduledPublishTime) || undefined,
@@ -266,4 +269,18 @@ const getCoverSizeUrl = (url: string, size: number | null = null) => {
     console.error("图片链接处理出错：", error);
     return "/images/song.jpg?assest";
   }
+};
+
+/**
+ * 检测歌词语言
+ * @param lyric 歌词内容
+ * @returns 语言代码（"ja" | "zh-CN" | "en"）
+ */
+export const getLyricLanguage = (lyric: string): string => {
+  // 判断日语 根据平假名和片假名
+  if (/[\u3040-\u309f\u30a0-\u30ff]/.test(lyric)) return "ja";
+  // 判断简体中文 根据中日韩统一表意文字基本区
+  if (/[\u4e00-\u9fa5]/.test(lyric)) return "zh-CN";
+  // 默认英语
+  return "en";
 };

@@ -50,17 +50,13 @@
           </n-h2>
           <n-collapse-transition :show="!listScrolling" class="collapse">
             <!-- 简介 -->
-            <n-ellipsis
+            <n-text
               v-if="playlistDetailData.description"
-              :line-clamp="1"
-              :tooltip="{
-                trigger: 'click',
-                placement: 'bottom',
-                width: 'trigger',
-              }"
+              class="description text-hidden"
+              @click.stop="openDescModal(playlistDetailData.description)"
             >
               {{ playlistDetailData.description }}
-            </n-ellipsis>
+            </n-text>
             <!-- 信息 -->
             <n-flex class="meta">
               <div class="item">
@@ -75,7 +71,7 @@
                 <SvgIcon name="Update" :depth="3" />
                 <n-text>{{ formatTimestamp(playlistDetailData.updateTime) }}</n-text>
               </div>
-              <div v-else-if="playlistDetailData.createTime" class="item">
+              <div v-if="playlistDetailData.createTime" class="item">
                 <SvgIcon name="Time" :depth="3" />
                 <n-text>{{ formatTimestamp(playlistDetailData.createTime) }}</n-text>
               </div>
@@ -160,7 +156,7 @@
                 </n-button>
               </n-dropdown>
             </n-flex>
-            <n-flex class="right">
+            <n-flex class="right" align="center">
               <!-- 模糊搜索 -->
               <n-input
                 v-if="playlistData?.length"
@@ -194,6 +190,7 @@
         :loading="loading"
         :height="songListHeight"
         :playListId="playlistId"
+        :doubleClickAction="searchData?.length ? 'add' : 'all'"
         @scroll="listScroll"
         @removeSong="removeSong"
       />
@@ -222,16 +219,17 @@ import {
   updatePlaylistPrivacy,
 } from "@/api/playlist";
 import { formatCoverList, formatSongsList } from "@/utils/format";
-import { coverLoaded, formatNumber, fuzzySearch, renderIcon } from "@/utils/helper";
+import { coverLoaded, formatNumber, fuzzySearch, renderIcon, copyData } from "@/utils/helper";
 import { renderToolbar } from "@/utils/meta";
 import { isLogin, toLikePlaylist, updateUserLikePlaylist } from "@/utils/auth";
 import { debounce } from "lodash-es";
 import { useDataStore, useStatusStore } from "@/stores";
-import { openBatchList, openUpdatePlaylist } from "@/utils/modal";
+import { openBatchList, openDescModal, openUpdatePlaylist } from "@/utils/modal";
 import { formatTimestamp } from "@/utils/time";
-import player from "@/utils/player";
+import { usePlayer } from "@/utils/player";
 
 const router = useRouter();
+const player = usePlayer();
 const dataStore = useDataStore();
 const statusStore = useStatusStore();
 
@@ -246,6 +244,9 @@ const searchData = ref<SongType[]>([]);
 // 歌单 ID
 const oldPlaylistId = ref<number>(0);
 const playlistId = computed<number>(() => Number(router.currentRoute.value.query.id as string));
+
+// 当前正在请求的歌单 ID，用于防止竞态条件
+const currentRequestId = ref<number>(0);
 
 // 加载提示
 const loading = ref<boolean>(true);
@@ -314,6 +315,18 @@ const moreOptions = computed<DropdownOption[]>(() => [
     icon: renderIcon("Batch"),
   },
   {
+    label: "复制分享链接",
+    key: "copy",
+    props: {
+      onClick: () =>
+        copyData(
+          `https://music.163.com/#/playlist?id=${playlistId.value}`,
+          "已复制分享链接到剪贴板",
+        ),
+    },
+    icon: renderIcon("Share"),
+  },
+  {
     label: "打开源页面",
     key: "open",
     props: {
@@ -331,6 +344,8 @@ const getPlaylistDetail = async (
   options: { getList: boolean; refresh: boolean } = { getList: true, refresh: false },
 ) => {
   if (!id) return;
+  // 设置当前请求的歌单 ID，用于防止竞态条件
+  currentRequestId.value = id;
   // 设置加载状态
   loading.value = true;
   const { getList, refresh } = options;
@@ -365,6 +380,8 @@ const handleOnlinePlaylist = async (id: number, getList: boolean, refresh: boole
 
   // 获取歌单详情
   const detail = await playlistDetail(id);
+  // 检查是否仍然是当前请求的歌单
+  if (currentRequestId.value !== id) return;
   playlistDetailData.value = formatCoverList(detail.playlist)[0];
   const count = playlistDetailData.value?.count || 0;
   // 不需要获取列表或无歌曲
@@ -376,10 +393,14 @@ const handleOnlinePlaylist = async (id: number, getList: boolean, refresh: boole
   if (isLogin() === 1 && count === detail.privileges?.length && count < 800) {
     const ids = detail.privileges.map((song: any) => song.id as number);
     const result = await songDetail(ids);
+    // 检查是否仍然是当前请求的歌单
+    if (currentRequestId.value !== id) return;
     playlistData.value = formatSongsList(result.songs);
   } else {
     await getPlaylistAllSongs(id, count, refresh);
   }
+  // 检查是否仍然是当前请求的歌单
+  if (currentRequestId.value !== id) return;
   loading.value = false;
 };
 
@@ -398,13 +419,28 @@ const getPlaylistAllSongs = async (
   const limit: number = 500;
   const listData: SongType[] = [];
   do {
+    // 检查是否仍然是当前请求的歌单
+    if (currentRequestId.value !== id) {
+      loadingMsgShow(false);
+      return;
+    }
     const result = await playlistAllSongs(id, limit, offset);
+    // 再次检查是否仍然是当前请求的歌单（请求完成后）
+    if (currentRequestId.value !== id) {
+      loadingMsgShow(false);
+      return;
+    }
     const songData = formatSongsList(result.songs);
     listData.push(...songData);
     if (!refresh) playlistData.value = playlistData.value.concat(songData);
     // 更新数据
     offset += limit;
-  } while (offset < count && isPlaylistPage.value);
+  } while (offset < count && isPlaylistPage.value && currentRequestId.value === id);
+  // 最终检查是否仍然是当前请求的歌单
+  if (currentRequestId.value !== id) {
+    loadingMsgShow(false);
+    return;
+  }
   if (refresh) playlistData.value = listData;
   // 关闭加载
   loadingMsgShow(false);
@@ -631,7 +667,7 @@ onMounted(() => getPlaylistDetail(playlistId.value));
         border-radius: 8px;
         height: 32px;
       }
-      :deep(.n-ellipsis) {
+      .description {
         margin-bottom: 8px;
         cursor: pointer;
       }

@@ -18,12 +18,21 @@
         class="bg-img"
         alt="cover"
       />
+      <!-- 流体效果 -->
+      <BackgroundRender
+        v-else-if="settingStore.playerBackgroundType === 'animation'"
+        :album="musicStore.songCover"
+        :fps="settingStore.playerBackgroundFps ?? 60"
+        :flowSpeed="settingStore.playerBackgroundFlowSpeed ?? 4"
+        :hasLyric="musicStore.isHasLrc"
+      />
     </Transition>
   </div>
 </template>
 
 <script setup lang="ts">
 import { useMusicStore, useSettingStore, useStatusStore } from "@/stores";
+import BackgroundRender from "../Special/BackgroundRender.vue";
 
 const musicStore = useMusicStore();
 const statusStore = useStatusStore();
@@ -66,6 +75,11 @@ const settingStore = useSettingStore();
       width: 100%;
       height: 100%;
       background-color: rgb(var(--main-color));
+    }
+  }
+  &.animation {
+    &::after {
+      display: none;
     }
   }
 }

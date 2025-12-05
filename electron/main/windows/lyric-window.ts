@@ -1,7 +1,7 @@
 import { BrowserWindow } from "electron";
 import { createWindow } from "./index";
 import { useStore } from "../store";
-import { lyricWinUrl } from "../utils/config";
+import { appName, lyricWinUrl } from "../utils/config";
 import mainWindow from "./main-window";
 
 class LyricWindow {
@@ -17,6 +17,11 @@ class LyricWindow {
     this.win.on("ready-to-show", () => {
       this.win?.show();
     });
+    // 页面加载完成后设置标题
+    // 这里的标题设置是为了 Linux 能够为桌面歌词单独设置窗口规则
+    this.win.webContents.on("did-finish-load", () => {
+      this.win?.setTitle(`${appName} - 桌面歌词`);
+    });
     // 歌词窗口缩放
     this.win?.on("resized", () => {
       const store = useStore();
@@ -28,8 +33,11 @@ class LyricWindow {
     });
     // 歌词窗口关闭
     this.win?.on("close", () => {
+      this.win = null;
       const mainWin = mainWindow?.getWin();
-      mainWin?.webContents.send("closeDesktopLyric");
+      if (mainWin) {
+        mainWin?.webContents.send("closeDesktopLyric");
+      }
     });
   }
   /**
@@ -58,7 +66,7 @@ class LyricWindow {
       movable: true,
       show: false,
       // 不在任务栏显示
-      // skipTaskbar: true,
+      skipTaskbar: true,
       // 窗口不能最小化
       minimizable: false,
       // 窗口不能最大化
@@ -78,7 +86,8 @@ class LyricWindow {
    * @returns BrowserWindow | null
    */
   getWin(): BrowserWindow | null {
-    return this.win;
+    if (this.win && !this.win?.isDestroyed()) return this.win;
+    return null;
   }
 }
 
