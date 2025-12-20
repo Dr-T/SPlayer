@@ -16,7 +16,7 @@
             >
               <template #placeholder>
                 <div class="cover-loading">
-                  <img src="/images/avatar.jpg?assest" class="loading-img" alt="loading-img" />
+                  <img src="/images/avatar.jpg?asset" class="loading-img" alt="loading-img" />
                 </div>
               </template>
             </n-image>
@@ -25,7 +25,7 @@
               v-if="item.user.isAnnualCount"
               class="annual"
               alt="annual"
-              src="/images/annual.png?assest"
+              src="/images/annual.png?asset"
               title="网易音乐人"
             />
           </div>
@@ -263,7 +263,7 @@ const likeComment = debounce(async (data: CommentType) => {
   &.transparent {
     .comments {
       border-color: transparent;
-      background-color: rgba(var(--main-color), 0.08);
+      background-color: rgba(var(--main-cover-color), 0.08);
       .content {
         font-size: 16px;
       }

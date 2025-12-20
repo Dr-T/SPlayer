@@ -19,7 +19,10 @@
           {{ packageJson.author }}
         </n-text>
         <n-text class="name">SPlayer</n-text>
-        <n-text class="version" depth="3">{{ packageJson.version }}</n-text>
+        <n-tag v-if="isDevBuild" class="version" size="small" type="warning" round>
+          DEV · v{{ packageJson.version }}
+        </n-tag>
+        <n-text v-else class="version" depth="3">v{{ packageJson.version }}</n-text>
       </div>
     </div>
     <n-scrollbar
@@ -33,11 +36,13 @@
         <!-- 播放 -->
         <PlaySetting v-else-if="activeKey === 'play'" />
         <!-- 歌词 -->
-        <LyricsSetting v-else-if="activeKey === 'lyrics'" />
+        <LyricsSetting v-else-if="activeKey === 'lyrics'" :scroll-to="props.scrollTo" />
         <!-- 快捷键 -->
         <KeyboardSetting v-else-if="activeKey === 'keyboard'" />
         <!-- 本地 -->
         <LocalSetting v-else-if="activeKey === 'local'" />
+        <!-- 第三方 -->
+        <ThirdSetting v-else-if="activeKey === 'third'" />
         <!-- 其他 -->
         <OtherSetting v-else-if="activeKey === 'other'" />
         <!-- 关于 -->
@@ -53,10 +58,10 @@
 import type { MenuOption, NScrollbar } from "naive-ui";
 import type { SettingType } from "@/types/main";
 import { renderIcon } from "@/utils/helper";
+import { isDevBuild, isElectron } from "@/utils/env";
 import packageJson from "@/../package.json";
-import { isElectron } from "@/utils/env";
 
-const props = defineProps<{ type: SettingType }>();
+const props = defineProps<{ type: SettingType; scrollTo?: string }>();
 
 // 设置内容
 const setScrollbar = ref<InstanceType<typeof NScrollbar> | null>(null);
@@ -92,6 +97,11 @@ const menuOptions: MenuOption[] = [
     label: "本地与下载",
     show: isElectron,
     icon: renderIcon("Storage"),
+  },
+  {
+    key: "third",
+    label: "第三方设置",
+    icon: renderIcon("Extension"),
   },
   {
     key: "other",
@@ -145,10 +155,7 @@ const toGithub = () => {
         margin-right: 6px;
       }
       .version {
-        &::before {
-          content: "v";
-          margin-right: 2px;
-        }
+        pointer-events: none;
       }
       .author {
         display: flex;

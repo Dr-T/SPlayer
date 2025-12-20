@@ -107,7 +107,10 @@ export const getSongLevelsData = (
   );
 };
 
-// 排序选项
+/**
+ * 排序选项
+ * @returns 排序选项
+ */
 export const sortOptions = {
   default: { name: "默认排序", show: "all", icon: "Sort" },
   titleAZ: { name: "标题升序（ A - Z ）", show: "all", icon: "SortAZ" },
@@ -120,7 +123,11 @@ export const sortOptions = {
   dateDown: { name: "日期降序", show: "radio", icon: "SortDateDown" },
 } as const;
 
-// 自定义图片工具栏
+/**
+ * 渲染图片工具栏
+ * @param nodes 图片工具栏节点
+ * @returns 图片工具栏
+ */
 export const renderToolbar = ({ nodes }: ImageRenderToolbarProps) => {
   return [
     nodes.prev,
@@ -133,3 +140,42 @@ export const renderToolbar = ({ nodes }: ImageRenderToolbarProps) => {
     nodes.close,
   ];
 };
+
+/**
+ * AMLL TTML DB Server 列表
+ * @returns AMLL TTML DB Server 列表
+ */
+export const amllDbServers = [
+  {
+    label: "【推荐】GitHub 官方仓库",
+    description: "官方源，更新及时，但访问速度可能较慢",
+    value:
+      "https://raw.githubusercontent.com/Steve-xmh/amll-ttml-db/refs/heads/main/ncm-lyrics/%s.ttml",
+  },
+  {
+    label: "AMLL TTML DB Service (SteveXMH)",
+    description: "作者提供的官方镜像源，但免费额度快没了 😂",
+    value: "https://amll-ttml-db.stevexmh.net/ncm/%s",
+  },
+  {
+    label: "【默认】AMLL TTML DB 镜像站 (HelloZGY)",
+    description: "社区提供的镜像源，感谢 HelloZGY",
+    value: "https://amlldb.bikonoo.com/ncm-lyrics/%s.ttml",
+  },
+  {
+    label: "Dimeta 镜像站 v1 (Luorix)",
+    description: "社区提供的镜像源，感谢 Luorix",
+    value: "https://amll.mirror.dimeta.top/api/db/ncm-lyrics/%s.ttml",
+  },
+  {
+    label: "JSDMirror GitHub 镜像站",
+    description: "一个提供免费前端静态资源 CDN 镜像服务的平台",
+    value: "https://cdn.jsdmirror.cn/gh/Steve-xmh/amll-ttml-db@main/ncm-lyrics/%s.ttml",
+  },
+] as const;
+
+/**
+ * 默认 AMLL TTML DB Server
+ * @returns 默认 AMLL TTML DB Server
+ */
+export const defaultAMLLDbServer = amllDbServers[2].value;

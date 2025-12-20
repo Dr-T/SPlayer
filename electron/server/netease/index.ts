@@ -2,6 +2,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { pathCase } from "change-case";
 import { serverLog } from "../../main/logger";
 import { useStore } from "../../main/store";
+import { defaultAMLLDbServer } from "../../main/utils/config";
 import NeteaseCloudMusicApi from "@neteasecloudmusicapienhanced/api";
 
 // 获取数据
@@ -24,7 +25,9 @@ const getHandler = (name: string, neteaseApi: (params: any) => any) => {
       if ([400, 301].includes(error.status)) {
         return reply.status(error.status).send(error.body);
       }
-      return reply.status(500);
+      return reply
+        .status(500)
+        .send(error.body || { error: error.message || "Internal Server Error" });
     }
   };
 };
@@ -70,7 +73,7 @@ export const initNcmAPI = async (fastify: FastifyInstance) => {
         return reply.status(400).send({ error: "id is required" });
       }
       const store = useStore();
-      const server = store.get("amllDbServer") ?? "https://amll-ttml-db.stevexmh.net/ncm/%s";
+      const server = store.get("amllDbServer") ?? defaultAMLLDbServer;
       const url = server.replace("%s", String(id));
       try {
         const response = await fetch(url);

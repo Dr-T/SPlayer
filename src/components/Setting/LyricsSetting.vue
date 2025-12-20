@@ -121,6 +121,64 @@
       </n-card>
       <n-card class="set-item">
         <div class="label">
+          <n-text class="name">歌词区域字体</n-text>
+          <n-text class="tip" :depth="3"> 是否独立更改歌词区域字体 </n-text>
+        </div>
+        <n-flex>
+          <Transition name="fade" mode="out-in">
+            <n-button
+              v-if="settingStore.LyricFont !== 'follow'"
+              type="primary"
+              strong
+              secondary
+              @click="settingStore.LyricFont = 'follow'"
+            >
+              恢复默认
+            </n-button>
+          </Transition>
+          <n-select
+            v-model:value="settingStore.LyricFont"
+            :options="[
+              { label: '跟随全局', value: 'follow' },
+              ...allFontsData.filter((v) => v.value !== 'default'),
+            ]"
+            class="set"
+            filterable
+          />
+        </n-flex>
+      </n-card>
+      <n-collapse-transition :show="settingStore.LyricFont !== 'follow'">
+        <n-card v-for="item in languageFontSettings" :key="item.key" class="set-item">
+          <div class="label">
+            <n-text class="name">{{ item.name }}歌词字体</n-text>
+            <n-text class="tip" :depth="3"> {{ item.tip }} </n-text>
+          </div>
+          <n-flex>
+            <Transition name="fade" mode="out-in">
+              <n-button
+                v-if="settingStore[item.key] !== 'follow'"
+                type="primary"
+                strong
+                secondary
+                @click="settingStore[item.key] = 'follow'"
+              >
+                恢复默认
+              </n-button>
+            </Transition>
+            <n-select
+              v-model:value="settingStore[item.key]"
+              :options="[
+                { label: '跟随全局', value: 'follow' },
+                ...allFontsData.filter((v) => v.value !== 'default'),
+              ]"
+              class="set"
+              filterable
+            />
+          </n-flex>
+        </n-card>
+      </n-collapse-transition>
+      <n-card class="set-item">
+        <div class="label">
           <n-text class="name">歌词字体加粗</n-text>
           <n-text class="tip" :depth="3">是否将歌词字体加粗显示，部分字体可能显示异常</n-text>
         </div>
@@ -268,7 +326,7 @@
               AMLL TTML DB 地址，请确保地址正确，否则将导致歌词获取失败
             </n-text>
           </div>
-          <n-button type="primary" strong secondary @click="changeAMLLDBServer"> 配置 </n-button>
+          <n-button type="primary" strong secondary @click="openAMLLServer"> 配置 </n-button>
         </n-card>
       </n-collapse-transition>
       <n-card class="set-item">
@@ -342,7 +400,7 @@
         />
       </n-card>
     </div>
-    <div v-if="isElectron" class="set-list">
+    <div v-if="isElectron" ref="desktopLyricRef" class="set-list">
       <n-h3 prefix="bar">
         桌面歌词
         <n-tag type="warning" size="small" round>Beta</n-tag>
@@ -356,7 +414,7 @@
           :value="statusStore.showDesktopLyric"
           :round="false"
           class="set"
-          @update:value="player.toggleDesktopLyric"
+          @update:value="player.setDesktopLyricShow"
         />
       </n-card>
       <n-card class="set-item">
@@ -573,26 +631,27 @@
 </template>
 
 <script setup lang="ts">
-import { NFlex, NInput, NText } from "naive-ui";
+import { NFlex, NText } from "naive-ui";
 import { useSettingStore, useStatusStore } from "@/stores";
 import { cloneDeep, isEqual } from "lodash-es";
-import { isValidURL } from "@/utils/validate";
 import { isElectron } from "@/utils/env";
-import { openLyricExclude } from "@/utils/modal";
+import { openLyricExclude, openAMLLServer } from "@/utils/modal";
 import { LyricConfig } from "@/types/desktop-lyric";
-import { usePlayer } from "@/utils/player";
+import { usePlayerController } from "@/core/player/PlayerController";
 import { SelectOption } from "naive-ui";
 import defaultDesktopLyricConfig from "@/assets/data/lyricConfig";
 
-const player = usePlayer();
+const props = defineProps<{ scrollTo?: string }>();
+
+const player = usePlayerController();
 const statusStore = useStatusStore();
 const settingStore = useSettingStore();
 
+// 桌面歌词区域引用
+const desktopLyricRef = ref<HTMLElement | null>(null);
+
 // 全部字体
 const allFontsData = ref<SelectOption[]>([]);
-
-// AMLL TTML DB 地址
-const amllDbServer = ref("https://amll-ttml-db.stevexmh.net/ncm/%s");
 
 // 桌面歌词配置
 const desktopLyricConfig = reactive<LyricConfig>({ ...defaultDesktopLyricConfig });
@@ -653,6 +712,25 @@ const restoreDesktopLyricConfig = () => {
   }
 };
 
+// 语言字体配置
+const languageFontSettings = [
+  {
+    name: "英语",
+    key: "englishLyricFont" as const,
+    tip: "是否在歌词为英语时单独设置字体",
+  },
+  {
+    name: "日语",
+    key: "japaneseLyricFont" as const,
+    tip: "是否在歌词为日语时单独设置字体",
+  },
+  {
+    name: "韩语",
+    key: "koreanLyricFont" as const,
+    tip: "是否在歌词为韩语时单独设置字体",
+  },
+];
+
 // 获取全部系统字体
 const getAllSystemFonts = async () => {
   const allFonts = await window.electron.ipcRenderer.invoke("get-all-fonts");
@@ -677,59 +755,18 @@ const getAllSystemFonts = async () => {
   });
 };
 
-// 修改 AMLL DB 服务地址
-const changeAMLLDBServer = () => {
-  window.$modal.create({
-    preset: "dialog",
-    title: "修改 AMLL DB 地址",
-    content: () =>
-      h(
-        NFlex,
-        { vertical: true },
-        {
-          default: () => [
-            h(
-              NText,
-              { depth: 3, type: "warning" },
-              { default: () => "如果你不清楚这里是做什么的，请不要修改" },
-            ),
-            h(NText, null, { default: () => "请确保地址正确，并且包含 %s（ 用于替换歌曲 ID ）" }),
-            h(NInput, {
-              value: amllDbServer.value,
-              onUpdateValue: (val) => (amllDbServer.value = val),
-              placeholder: "请输入 AMLL TTML DB 地址",
-            }),
-          ],
-        },
-      ),
-    positiveText: "确认",
-    negativeText: "取消",
-    onPositiveClick: async () => {
-      const urlValue = amllDbServer.value.trim();
-      // 验证 URL 格式和 %s
-      if (isValidURL(urlValue) && urlValue.includes("%s")) {
-        await window.api.store.set("amllDbServer", urlValue);
-        settingStore.amllDbServer = urlValue;
-        window.$message.success("AMLL TTML DB 地址已更新");
-        return true;
-      } else {
-        window.$message.error("请输入正确的网址格式，需包含 %s");
-        return false;
-      }
-    },
-  });
-};
-
 onMounted(async () => {
   if (isElectron) {
     getDesktopLyricConfig();
     getAllSystemFonts();
     // 恢复地址
-    const server = await window.api.store.get("amllDbServer");
-    if (server) {
-      amllDbServer.value = server;
-      settingStore.amllDbServer = server;
-    }
+    await window.api.store.set("amllDbServer", settingStore.amllDbServer);
+  }
+  // 如果需要滚动到桌面歌词部分
+  if (props.scrollTo === "desktop" && desktopLyricRef.value) {
+    nextTick(() => {
+      desktopLyricRef.value?.scrollIntoView({ behavior: "instant", block: "start" });
+    });
   }
 });
 </script>
