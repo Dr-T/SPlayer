@@ -15,9 +15,11 @@ interface ShortcutStore {
     playOrPause: ShortcutType;
     playPrev: ShortcutType;
     playNext: ShortcutType;
+    seekForward: ShortcutType;
+    seekBackward: ShortcutType;
     volumeUp: ShortcutType;
     volumeDown: ShortcutType;
-    toogleDesktopLyric: ShortcutType;
+    "toggle-desktop-lyric": ShortcutType;
     openPlayer: ShortcutType;
     openPlayList: ShortcutType;
     closePlayer: ShortcutType;
@@ -47,6 +49,17 @@ export const useShortcutStore = defineStore("shortcut", {
         shortcut: "CmdOrCtrl+ArrowRight",
         globalShortcut: "CmdOrCtrl+Shift+Right",
       },
+      // 快进 / 快退
+      seekForward: {
+        name: "快进 5 秒",
+        shortcut: "ArrowRight",
+        globalShortcut: "CmdOrCtrl+Shift+Right",
+      },
+      seekBackward: {
+        name: "快退 5 秒",
+        shortcut: "ArrowLeft",
+        globalShortcut: "CmdOrCtrl+Shift+Left",
+      },
       // 音量加减
       volumeUp: {
         name: "音量加",
@@ -59,7 +72,7 @@ export const useShortcutStore = defineStore("shortcut", {
         globalShortcut: "CmdOrCtrl+Shift+Down",
       },
       // 桌面歌词
-      toogleDesktopLyric: {
+      "toggle-desktop-lyric": {
         name: "桌面歌词",
         shortcut: "CmdOrCtrl+KeyD",
         globalShortcut: "CmdOrCtrl+Shift+D",

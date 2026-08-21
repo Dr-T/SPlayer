@@ -1,5 +1,5 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosError, AxiosResponse } from "axios";
-import { isDev, isElectron } from "./env";
+import { isDev } from "./env";
 import { useSettingStore } from "@/stores";
 import { getCookie } from "./cookie";
 import { isLogin } from "./auth";
@@ -31,12 +31,8 @@ server.interceptors.request.use(
     if (!request.params) request.params = {};
     // Cookie
     if (!request.params.noCookie && (isLogin() || getCookie("MUSIC_U") !== null)) {
-      const cookie = `MUSIC_U=${getCookie("MUSIC_U")};`;
-      request.params.cookie = encodeURIComponent(cookie);
-    }
-    // realIP
-    if (!isElectron && !request.url?.includes("/login")) {
-      request.params.realIP = "116.25.146.177";
+      const cookie = `MUSIC_U=${getCookie("MUSIC_U")};os=pc;`;
+      request.params.cookie = cookie;
     }
     // 自定义 realIP
     if (settingStore.useRealIP) {
@@ -67,50 +63,48 @@ server.interceptors.request.use(
 server.interceptors.response.use(
   (response: AxiosResponse) => response,
   (error: AxiosError) => {
+    // 超时/网络错误
+    if (
+      error.code === "ECONNABORTED" ||
+      error.message.includes("timeout") ||
+      error.message.includes("Network Error")
+    ) {
+      window.$message?.warning("网络请求超时，请检查网络连接");
+      // 返回 null 而非 reject，业务代码需要检查返回值
+      return Promise.resolve({ data: null });
+    }
+
     const { response } = error;
-    // 状态码处理
+    // 状态码处理（仅记录日志，不触发弹窗）
     switch (response?.status) {
       case 400:
-        console.error("客户端错误：", response.status, response.statusText);
-        // 执行客户端错误的处理逻辑
+        console.warn("客户端错误：", response.status, response.statusText);
         break;
       case 401:
-        console.error("未授权：", response.status, response.statusText);
-        // 执行未授权的处理逻辑
+        console.warn("未授权：", response.status, response.statusText);
         break;
       case 403:
-        console.error("禁止访问：", response.status, response.statusText);
-        // 执行禁止访问的处理逻辑
+        console.warn("禁止访问：", response.status, response.statusText);
         break;
       case 404:
-        console.error("未找到资源：", response.status, response.statusText);
-        // 执行未找到资源的处理逻辑
+        console.warn("未找到资源：", response.status, response.statusText);
         break;
       case 500:
-        console.error("服务器错误：", response.status, response.statusText);
-        // 执行服务器错误的处理逻辑
+        console.warn("服务器错误：", response.status, response.statusText);
         break;
       default:
-        // 处理其他状态码或错误条件
-        console.error("未处理的错误：", error.message);
+        console.warn("未处理的错误：", error.message);
     }
-    // window.$notification.error({
-    //   title: "请求错误",
-    //   description: `状态码: ${response?.status || ""}`,
-    //   content: (response && (response.data as { message?: string }).message) || error.message,
-    //   meta: "若持续发生，可尝试软件热重载",
-    //   duration: 5000,
-    // });
     // 返回错误
     return Promise.reject(error);
   },
 );
 
 // 请求
-const request = async (config: AxiosRequestConfig): Promise<any> => {
+const request = async <T = any>(config: AxiosRequestConfig): Promise<T> => {
   // 返回请求数据
   const { data } = await server.request(config);
-  return data as any;
+  return data as T;
 };
 
 export default request;

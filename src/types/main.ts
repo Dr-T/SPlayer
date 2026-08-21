@@ -1,4 +1,4 @@
-import { songLevelData, sortOptions } from "@/utils/meta";
+import { songLevelData } from "@/utils/meta";
 
 export type MetaData = {
   id: number;
@@ -9,6 +9,8 @@ export type MetaData = {
 
 export type DjData = {
   id: number;
+  /** 所属电台 ID */
+  radioId?: number;
   name: string;
   creator?: string;
 };
@@ -22,6 +24,14 @@ export type CoverSize = {
 
 /** 音质 */
 export enum QualityType {
+  /** 超清母带 */
+  Master = "Master", // jymaster
+  /** 杜比全景声 */
+  Dolby = "Dolby", // db
+  /** 沉浸环绕声 */
+  Spatial = "Spatial", // sky
+  /** 高清环绕声 */
+  Surround = "Surround", // jyeffect
   /** Hi-Res */
   HiRes = "Hi-Res", // hr
   /** 无损 */
@@ -33,6 +43,9 @@ export enum QualityType {
   /** 低质量 */
   LQ = "LQ", // l: 128kbps
 }
+
+/** 音频源类型 */
+export type AudioSourceType = "official" | "netease" | "kuwo" | "bodian" | "local" | "streaming";
 
 export type UserType = {
   id: number;
@@ -80,6 +93,8 @@ export type SongType = {
   pc?: boolean;
   /** 大小 */
   size?: number;
+  /** 曲目序号 */
+  trackNumber?: number;
   /** 音质 */
   quality?: QualityType;
   /** 创建时间 */
@@ -90,14 +105,35 @@ export type SongType = {
   playCount?: number;
   /**
    * 歌曲类型
-   * song: 歌曲 | radio: 电台
+   * song: 歌曲 | radio: 电台 | streaming: 流媒体
    */
-  type: "song" | "radio";
+  type: "song" | "radio" | "streaming";
+  /** 流媒体播放 URL */
+  streamUrl?: string;
+  /** 原始 ID（流媒体服务器的 ID） */
+  originalId?: string;
+  /** 流媒体服务器类型 */
+  serverType?: "navidrome" | "jellyfin" | "subsonic" | "opensubsonic" | "emby";
+  /** 流媒体服务器 ID */
+  serverId?: string;
+  /** 来源标记 */
+  source?: "streaming";
+  /** 标记 */
+  mark?: number;
+  /** ReplayGain 信息 */
+  replayGain?: ReplayGainType;
 };
+
+export interface ReplayGainType {
+  trackGain?: number;
+  trackPeak?: number;
+  albumGain?: number;
+  albumPeak?: number;
+}
 
 // Cover
 export type CoverType = {
-  id: number;
+  id: number | string;
   name: string;
   cover: string;
   coverSize?: CoverSize;
@@ -123,6 +159,24 @@ export type CoverType = {
     second: string;
   }[];
 };
+
+/** 本地歌单类型 */
+export interface LocalPlaylistType {
+  /** 歌单ID（16位数字） */
+  id: number;
+  /** 歌单名称 */
+  name: string;
+  /** 歌单描述 */
+  description?: string;
+  /** 歌单封面 */
+  cover?: string;
+  /** 歌曲ID数组 */
+  songs: string[];
+  /** 创建时间 */
+  createTime: number;
+  /** 更新时间 */
+  updateTime: number;
+}
 
 // Artist
 export type ArtistType = {
@@ -156,14 +210,6 @@ export type CommentType = {
   liked?: boolean;
   likedCount?: number;
 };
-
-/**
- * 播放模式
- * - repeat: 重复播放
- * - repeat-once: 重复播放当前歌曲
- * - shuffle: 随机播放
- */
-export type PlayModeType = "repeat" | "repeat-once" | "shuffle";
 
 /**
  * 歌词内容类型
@@ -252,7 +298,19 @@ export interface UserLikeDataType {
 }
 
 // sort
-export type SortType = keyof typeof sortOptions;
+export type SortField =
+  | "default"
+  | "title"
+  | "artist"
+  | "album"
+  | "trackNumber"
+  | "filename"
+  | "duration"
+  | "size"
+  | "createTime"
+  | "updateTime";
+
+export type SortOrder = "default" | "asc" | "desc";
 
 /** 歌曲元素音质类型 */
 export type SongLevelType = keyof typeof songLevelData;
@@ -267,7 +325,15 @@ export type SongLevelDataType = {
 };
 
 // setting
-export type SettingType = "general" | "play" | "lyrics" | "keyboard" | "local" | "third" | "other" | "about";
+export type SettingType =
+  | "general"
+  | "appearance"
+  | "play"
+  | "lyrics"
+  | "keyboard"
+  | "local"
+  | "network"
+  | "about";
 
 // UpdateLog
 export type UpdateLogType = {
@@ -301,3 +367,13 @@ export interface UpdateInfoType {
 
 // 登录方式
 export type LoginType = "qr" | "phone" | "cookie" | "uid";
+
+// 账号信息
+export interface AccountType {
+  userId: number;
+  name: string;
+  avatarUrl: string;
+  cookies: Record<string, string>;
+  loginType: LoginType;
+  lastLoginTime: number;
+}

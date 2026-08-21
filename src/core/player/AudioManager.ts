@@ -1,212 +1,321 @@
-/**
- * @file AudioManager.ts
- * @description 封装原生 AudioContext 与 HTMLAudioElement 的高级音频管理器
- * @author imsyy
- */
-
-/** 扩充 AudioContext 接口以支持 setSinkId (实验性 API) */
-interface IExtendedAudioContext extends AudioContext {
-  setSinkId(deviceId: string): Promise<void>;
-}
-
-/**
- * 音频事件类型定义
- */
-export type AudioEventType =
-  | "play"
-  | "pause"
-  | "ended"
-  | "timeupdate"
-  | "error"
-  | "waiting"
-  | "canplay"
-  | "loadedmetadata"
-  | "loadstart"
-  | "volumechange"
-  | "seeking"
-  | "seeked";
+import { useSettingStore } from "@/stores";
+import { checkIsolationSupport, isElectron } from "@/utils/env";
+import { TypedEventTarget } from "@/utils/TypedEventTarget";
+import { AudioElementPlayer } from "../audio-player/AudioElementPlayer";
+import { AUDIO_EVENTS, type AudioEventMap } from "../audio-player/BaseAudioPlayer";
+import { FFmpegAudioPlayer } from "../audio-player/ffmpeg-engine/FFmpegAudioPlayer";
+import type {
+  EngineCapabilities,
+  FadeCurve,
+  IPlaybackEngine,
+  PauseOptions,
+  PlayOptions,
+} from "../audio-player/IPlaybackEngine";
+import { MpvPlayer, useMpvPlayer } from "../audio-player/MpvPlayer";
+import { getSharedAudioContext } from "../automix/SharedAudioContext";
 
 /**
- * 音频管理器类
+ * 音频管理器
+ * 统一的音频播放接口，根据设置选择播放引擎
  */
-class AudioManager {
-  /** 核心上下文 */
-  private audioCtx: IExtendedAudioContext | null = null;
-  /** 音频元素 */
-  private audioElement: HTMLAudioElement | null = null;
+class AudioManager extends TypedEventTarget<AudioEventMap> implements IPlaybackEngine {
+  /** 当前活动的播放引擎 */
+  private engine: IPlaybackEngine;
+  /** 待切换的播放引擎 (Crossfade 期间) */
+  private pendingEngine: IPlaybackEngine | null = null;
+  /** 切换引擎的定时器 */
+  private pendingSwitchTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 用于清理当前引擎的事件监听器 */
+  private cleanupListeners: (() => void) | null = null;
+  /** 是否正在进行 Crossfade (避免事件干扰) */
+  private isCrossfading: boolean = false;
 
-  /** 音频源节点 */
-  private sourceNode: MediaElementAudioSourceNode | null = null;
-  /** 增益节点 */
-  private gainNode: GainNode | null = null;
-  /** 分析节点 */
-  private analyserNode: AnalyserNode | null = null;
-  /** 均衡器节点数组 */
-  private filters: BiquadFilterNode[] = [];
+  /** 主音量 (用于 Crossfade 初始化) */
+  private _masterVolume: number = 1.0;
 
-  /** 初始化状态 */
-  private isInitialized = false;
-  /** 音量 (0-1) */
-  private volume: number = 1;
-  /** 事件监听器集合 */
-  private eventListeners: Map<string, Set<(e: Event) => void>> = new Map();
+  /** 当前引擎类型：element | ffmpeg | mpv */
+  public readonly engineType: "element" | "ffmpeg" | "mpv";
 
-  /** 均衡器频段 (10段) */
-  private readonly eqFrequencies = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+  /** 引擎能力描述 */
+  public readonly capabilities: EngineCapabilities;
 
-  /**
-   * 构造函数
-   */
-  constructor() {
-    this.audioElement = new Audio();
-    this.audioElement.crossOrigin = "anonymous";
-    this.bindInternalEvents();
+  constructor(playbackEngine: "web-audio" | "mpv", audioEngine: "element" | "ffmpeg") {
+    super();
+
+    // 根据设置选择引擎
+    if (isElectron && playbackEngine === "mpv") {
+      const mpvPlayer = useMpvPlayer();
+      mpvPlayer.init();
+      this.engine = mpvPlayer;
+      this.engineType = "mpv";
+    } else if (audioEngine === "ffmpeg" && checkIsolationSupport()) {
+      this.engine = new FFmpegAudioPlayer();
+      this.engineType = "ffmpeg";
+    } else {
+      if (audioEngine === "ffmpeg" && !checkIsolationSupport()) {
+        console.warn("[AudioManager] 环境未隔离，从 FFmpeg 回退到 Web Audio");
+      }
+
+      this.engine = new AudioElementPlayer();
+      this.engineType = "element";
+    }
+
+    this.capabilities = this.engine.capabilities;
+    this.bindEngineEvents();
   }
 
   /**
-   * 初始化 AudioContext 和音频图谱
-   * 可以在用户交互时手动调用，或者在播放时自动调用
+   * 绑定引擎事件，转发到 AudioManager
    */
-  public init() {
-    if (this.isInitialized) return;
-
-    try {
-      // 使用标准 AudioContext
-      this.audioCtx = new AudioContext() as IExtendedAudioContext;
-
-      // 创建节点
-      this.sourceNode = this.audioCtx.createMediaElementSource(this.audioElement!);
-      this.gainNode = this.audioCtx.createGain();
-      this.analyserNode = this.audioCtx.createAnalyser();
-
-      // 配置分析器
-      this.analyserNode.fftSize = 512;
-
-      // 创建均衡器滤波器
-      this.filters = this.eqFrequencies.map((freq) => {
-        const filter = this.audioCtx!.createBiquadFilter();
-        filter.type = "peaking";
-        filter.frequency.value = freq;
-        filter.Q.value = 1;
-        filter.gain.value = 0; // 默认平坦
-        return filter;
-      });
-
-      // 连接图谱: Source -> EQ[0] -> ... -> EQ[9] -> Analyser -> Gain -> Destination
-      let currentNode: AudioNode = this.sourceNode;
-
-      for (const filter of this.filters) {
-        currentNode.connect(filter);
-        currentNode = filter;
-      }
-
-      currentNode.connect(this.analyserNode);
-      this.analyserNode.connect(this.gainNode);
-      this.gainNode.connect(this.audioCtx.destination);
-
-      // 同步音量
-      this.gainNode.gain.value = this.volume;
-
-      this.isInitialized = true;
-    } catch (error) {
-      console.error("AudioManager: 初始化 AudioContext 失败", error);
+  private bindEngineEvents() {
+    if (this.cleanupListeners) {
+      this.cleanupListeners();
     }
+
+    const events = Object.values(AUDIO_EVENTS);
+    const handlers: Map<string, EventListener> = new Map();
+
+    events.forEach((eventType) => {
+      const handler = (e: Event) => {
+        // [修复] Crossfade 期间屏蔽旧引擎的 pause/ended/error 事件，防止状态误判
+        if (
+          this.isCrossfading &&
+          (eventType === "pause" || eventType === "ended" || eventType === "error")
+        ) {
+          // 如果是 ended，可能需要特别处理？不，crossfade 期间旧引擎结束是正常的
+          // 如果是 error，也应该由新引擎接管，或者通过 promise 抛出
+          return;
+        }
+
+        const detail = (e as CustomEvent).detail;
+        this.dispatch(eventType, detail);
+      };
+      handlers.set(eventType, handler);
+      this.engine.addEventListener(eventType, handler);
+    });
+
+    this.cleanupListeners = () => {
+      handlers.forEach((handler, eventType) => {
+        this.engine.removeEventListener(eventType, handler);
+      });
+    };
+  }
+
+  /**
+   * 初始化
+   */
+  public init(): void {
+    this.engine.init();
+  }
+
+  /**
+   * 销毁引擎
+   */
+  public destroy(): void {
+    this.clearPendingSwitch();
+    if (this.cleanupListeners) {
+      this.cleanupListeners();
+      this.cleanupListeners = null;
+    }
+    this.engine.destroy();
   }
 
   /**
    * 加载并播放音频
-   * @param url 音频地址
-   * @param options 播放选项 (fadeIn: 是否渐入, fadeDuration: 渐入时长, autoPlay: 是否自动播放)
    */
-  public async play(
-    url?: string,
-    options: { fadeIn?: boolean; fadeDuration?: number; autoPlay?: boolean } = {},
-  ) {
-    // 自动播放控制
-    const shouldPlay = options.autoPlay ?? true;
-    // 不初始化 AudioContext
-    if (!shouldPlay) {
-      if (url && this.audioElement) {
-        this.audioElement.src = url;
-        this.audioElement.load();
-      }
+  public async play(url?: string, options?: PlayOptions): Promise<void> {
+    await this.engine.play(url, options);
+  }
+
+  /**
+   * 交叉淡入淡出到下一首
+   * @param url 下一首歌曲 URL
+   * @param options 配置
+   */
+  public async crossfadeTo(
+    url: string,
+    options: {
+      duration: number;
+      seek?: number;
+      autoPlay?: boolean;
+      uiSwitchDelay?: number;
+      onSwitch?: () => void;
+      mixType?: "default" | "bassSwap";
+      rate?: number;
+      replayGain?: number;
+      fadeCurve?: FadeCurve;
+    },
+  ): Promise<void> {
+    // MPV 不支持 Web Audio API 级别的 Crossfade，回退到普通播放
+    if (this.engineType === "mpv") {
+      this.stop();
+      if (options.onSwitch) options.onSwitch();
+      await this.play(url, {
+        autoPlay: options.autoPlay ?? true,
+        seek: options.seek,
+        fadeIn: true,
+        fadeDuration: options.duration,
+      });
       return;
     }
-    // 需要播放时才初始化 AudioContext
-    if (!this.isInitialized) this.init();
-
-    // 如果上下文被挂起，则恢复
-    if (this.audioCtx?.state === "suspended") {
-      await this.audioCtx.resume();
+    console.log(
+      `🔀 [AudioManager] Starting Crossfade (duration: ${options.duration}s, type: ${options.mixType})`,
+    );
+    // 清理之前的 pending
+    this.clearPendingSwitch();
+    this.isCrossfading = true;
+    // 创建新引擎 (保持同类型)
+    let newEngine: IPlaybackEngine;
+    if (this.engineType === "ffmpeg") {
+      newEngine = new FFmpegAudioPlayer();
+    } else {
+      newEngine = new AudioElementPlayer();
     }
-
-    if (url && this.audioElement) {
-      this.audioElement.src = url;
-      this.audioElement.load();
+    newEngine.init();
+    this.pendingEngine = newEngine;
+    // 预设状态
+    newEngine.setVolume(0);
+    if (this.engine.capabilities.supportsRate) {
+      // 优先使用传入的速率
+      const targetRate = options.rate ?? this.getRate();
+      newEngine.setRate(targetRate);
     }
-
-    // 处理渐入
-    if (options.fadeIn && this.gainNode && this.audioCtx) {
-      this.gainNode.gain.cancelScheduledValues(this.audioCtx.currentTime);
-      this.gainNode.gain.setValueAtTime(0, this.audioCtx.currentTime);
-      this.gainNode.gain.linearRampToValueAtTime(
-        this.volume,
-        this.audioCtx.currentTime + (options.fadeDuration || 1),
-      );
-    } else if (this.gainNode && this.audioCtx) {
-      this.gainNode.gain.cancelScheduledValues(this.audioCtx.currentTime);
-      this.gainNode.gain.setValueAtTime(this.volume, this.audioCtx.currentTime);
+    // 将回放增益应用于新引擎
+    if (options.replayGain !== undefined) {
+      newEngine.setReplayGain?.(options.replayGain);
     }
-
-    try {
-      await this.audioElement?.play();
-    } catch (error) {
-      console.error("AudioManager: 播放失败", error);
-      throw error;
+    // 低频互换滤波设置
+    if (options.mixType === "bassSwap") {
+      this.engine.setHighPassQ?.(1.0);
+      newEngine.setHighPassQ?.(1.0);
+      newEngine.setHighPassFilter?.(400, 0);
     }
+    const fadeCurve = options.fadeCurve ?? "equalPower";
+    // 启动新引擎
+    await newEngine.play(url, {
+      autoPlay: true,
+      seek: options.seek,
+      fadeIn: false,
+    });
+    // 新引擎逐渐增加音量
+    if (newEngine.rampVolumeTo) {
+      newEngine.rampVolumeTo(this._masterVolume, options.duration, fadeCurve);
+    } else {
+      newEngine.setVolume(this._masterVolume);
+    }
+    if (options.mixType === "bassSwap") {
+      // 针对 DJ 风格的互换低频滤镜：首先计算过滤转换的中间点与释放点
+      const mid = options.duration * 0.5;
+      // 混音衰减预留，不超过0.6s
+      const release = Math.min(0.6, options.duration * 0.25);
+      const t0 = getSharedAudioContext().currentTime + 0.02;
+      const tMid = t0 + mid;
+      const tReleaseEnd = tMid + release;
+      const tEnd = t0 + options.duration;
+      const bypassFreq = 10;
+      // 对于待退出的旧引擎，逐渐增加高通滤波，切除其低频 (让出低音空间)
+      if (this.engine.setHighPassFilterAt && this.engine.rampHighPassFilterToAt) {
+        this.engine.setHighPassFilterAt(bypassFreq, t0);
+        this.engine.rampHighPassFilterToAt(400, tMid);
+      } else {
+        this.engine.setHighPassFilter?.(400, mid);
+      }
+      // 对于待进入的新引擎，最初先切除低频，然后在淡入达到一半时迅速恢复其低频 (Bass Swap的Drop听感)
+      if (newEngine.setHighPassFilterAt && newEngine.rampHighPassFilterToAt) {
+        newEngine.setHighPassFilterAt(400, t0);
+        newEngine.setHighPassFilterAt(400, tMid);
+        newEngine.rampHighPassFilterToAt(bypassFreq, tReleaseEnd);
+        newEngine.setHighPassFilterAt(bypassFreq, tEnd + 0.05);
+      }
+      // 设置高通滤波的Q值，0.707是最佳的
+      if (newEngine.setHighPassQAt) {
+        newEngine.setHighPassQAt(0.707, tEnd + 0.05);
+      } else {
+        newEngine.setHighPassQ?.(0.707);
+      }
+    }
+    // 旧引擎淡出并保持上下文运行
+    const oldEngine = this.engine;
+    oldEngine.pause({
+      fadeOut: true,
+      fadeDuration: options.duration,
+      fadeCurve,
+      keepContextRunning: true,
+    });
+    const commitSwitch = () => {
+      console.log("🔀 [AudioManager] Committing Crossfade Switch");
+      if (this.cleanupListeners) {
+        this.cleanupListeners();
+        this.cleanupListeners = null;
+      }
+
+      this.engine = newEngine;
+      this.pendingEngine = null; // Cleared from pending, now active
+      this.isCrossfading = false;
+      this.bindEngineEvents();
+      // 触发 UI 切换回调
+      try {
+        options.onSwitch?.();
+      } catch (e) {
+        console.error("🔀 [AudioManager] onSwitch callback failed:", e);
+      }
+      // 触发一次 update 事件以刷新 UI 进度和播放状态
+      this.dispatch(AUDIO_EVENTS.TIME_UPDATE, undefined);
+      this.dispatch(AUDIO_EVENTS.PLAY, undefined);
+      if (options.mixType !== "bassSwap") {
+        this.engine.setHighPassFilter?.(0, 0);
+      }
+    };
+    const switchDelay = options.uiSwitchDelay ?? 0;
+    if (switchDelay > 0) {
+      this.pendingSwitchTimer = setTimeout(() => {
+        this.pendingSwitchTimer = null;
+        commitSwitch();
+      }, switchDelay * 1000);
+    } else {
+      commitSwitch();
+    }
+    // 销毁旧引擎
+    setTimeout(() => oldEngine.destroy(), options.duration * 1000 + 1000);
+  }
+
+  /**
+   * 恢复播放
+   */
+  public async resume(options?: { fadeIn?: boolean; fadeDuration?: number }): Promise<void> {
+    await this.engine.resume(options);
   }
 
   /**
    * 暂停音频
-   * @param options 暂停选项 (fadeOut: 是否渐出, fadeDuration: 渐出时长)
    */
-  public pause(options: { fadeOut?: boolean; fadeDuration?: number } = {}) {
-    if (options.fadeOut && this.gainNode && this.audioCtx) {
-      const currentTime = this.audioCtx.currentTime;
-      // 从当前值线性降低到 0
-      this.gainNode.gain.cancelScheduledValues(currentTime);
-      this.gainNode.gain.setValueAtTime(this.gainNode.gain.value, currentTime);
-      this.gainNode.gain.linearRampToValueAtTime(0, currentTime + (options.fadeDuration || 1));
-      // 等待渐出完成后暂停
-      setTimeout(
-        () => {
-          this.audioElement?.pause();
-        },
-        (options.fadeDuration || 1) * 1000,
-      );
-    } else {
-      this.audioElement?.pause();
-    }
-  }
-
-  /**
-   * 切换播放/暂停状态
-   */
-  public toggle() {
-    if (this.paused) {
-      this.play();
-    } else {
-      this.pause();
-    }
+  public pause(options?: PauseOptions): void {
+    this.engine.pause(options);
   }
 
   /**
    * 停止播放并将时间重置为 0
    */
-  public stop() {
-    if (this.audioElement) {
-      this.pause();
-      this.audioElement.currentTime = 0;
+  public stop(): void {
+    this.clearPendingSwitch();
+    this.engine.stop();
+  }
+
+  private clearPendingSwitch() {
+    if (this.pendingSwitchTimer) {
+      clearTimeout(this.pendingSwitchTimer);
+      this.pendingSwitchTimer = null;
+    }
+    this.engine.setHighPassFilter?.(0, 0);
+    this.engine.setHighPassQ?.(0.707);
+    if (this.pendingEngine) {
+      // 如果有待切换引擎，销毁它
+      try {
+        this.pendingEngine.destroy();
+      } catch {
+        // ignore
+      }
+      this.pendingEngine = null;
     }
   }
 
@@ -214,242 +323,207 @@ class AudioManager {
    * 跳转到指定时间
    * @param time 时间（秒）
    */
-  public seek(time: number) {
-    if (this.audioElement) {
-      this.audioElement.currentTime = time;
-    }
+  public seek(time: number): void {
+    this.engine.seek(time);
+  }
+
+  /**
+   * 设置 ReplayGain 增益
+   * @param gain 线性增益值
+   */
+  public setReplayGain(gain: number): void {
+    this.engine.setReplayGain?.(gain);
   }
 
   /**
    * 设置音量
    * @param value 音量值 (0.0 - 1.0)
    */
-  public setVolume(value: number) {
-    this.volume = Math.max(0, Math.min(1, value));
-    if (this.gainNode && this.audioCtx) {
-      this.gainNode.gain.cancelScheduledValues(this.audioCtx.currentTime);
-      this.gainNode.gain.setValueAtTime(this.volume, this.audioCtx.currentTime);
-    }
+  public setVolume(value: number): void {
+    this._masterVolume = value;
+    this.engine.setVolume(value);
+  }
+
+  /**
+   * 获取当前音量
+   */
+  public getVolume(): number {
+    return this.engine.getVolume();
   }
 
   /**
    * 设置播放速率
    * @param value 速率 (0.5 - 2.0)
    */
-  public setRate(value: number) {
-    if (this.audioElement) {
-      this.audioElement.playbackRate = value;
-    }
+  public setRate(value: number): void {
+    this.engine.setRate(value);
   }
 
   /**
    * 获取当前播放速率
-   * @returns 当前速率
    */
   public getRate(): number {
-    return this.audioElement?.playbackRate || 1;
+    return this.engine.getRate();
   }
 
   /**
-   * 获取当前音量
-   * @returns 当前音量值 (0.0 - 1.0)
+   * 设置音频延迟手动补偿
+   * @param offset 偏移量 (毫秒)
    */
-  public getVolume(): number {
-    return this.volume;
+  public setAudioDelayCompensation(offset: number): void {
+    // FFmpeg 和 MPV 引擎可能没有实现此方法
+    this.engine.setAudioDelayCompensation?.(offset);
   }
 
   /**
-   * 监听音频事件
-   * @param event 事件名称
-   * @param callback 回调函数
+   * 设置输出设备
    */
-  public on(event: AudioEventType, callback: (e: Event) => void) {
-    if (!this.eventListeners.has(event)) {
-      this.eventListeners.set(event, new Set());
-    }
-    this.eventListeners.get(event)!.add(callback);
-  }
-
-  /**
-   * 移除事件监听
-   * @param event 事件名称
-   * @param callback 回调函数
-   */
-  public off(event: AudioEventType, callback: (e: Event) => void) {
-    const listeners = this.eventListeners.get(event);
-    if (listeners) {
-      listeners.delete(callback);
-    }
-  }
-
-  /**
-   * 移除所有事件监听
-   */
-  public offAll() {
-    this.eventListeners.clear();
-  }
-
-  /**
-   * 绑定内部音频元素事件并转发
-   * @param event 事件名称
-   */
-  private bindInternalEvents() {
-    if (!this.audioElement) return;
-
-    const events: AudioEventType[] = [
-      "play",
-      "pause",
-      "ended",
-      "timeupdate",
-      "error",
-      "waiting",
-      "canplay",
-      "loadedmetadata",
-      "loadstart",
-      "volumechange",
-      "seeking",
-      "seeked",
-    ];
-
-    events.forEach((event) => {
-      this.audioElement!.addEventListener(event, (e) => {
-        // 传递错误码
-        if (event === "error" && this.audioElement) {
-          const errCode = this.getErrorCode();
-          const customEvent = new CustomEvent("error", {
-            detail: { originalEvent: e, errorCode: errCode },
-          });
-          const listeners = this.eventListeners.get(event);
-          if (listeners) {
-            listeners.forEach((cb) => cb(customEvent));
-          }
-        } else {
-          const listeners = this.eventListeners.get(event);
-          if (listeners) {
-            listeners.forEach((cb) => cb(e));
-          }
-        }
-      });
-    });
+  public async setSinkId(deviceId: string): Promise<void> {
+    await this.engine.setSinkId(deviceId);
   }
 
   /**
    * 获取频谱数据 (用于可视化)
-   * @returns Uint8Array 频谱数据
    */
   public getFrequencyData(): Uint8Array {
-    if (!this.analyserNode) return new Uint8Array(0);
-    const dataArray = new Uint8Array(this.analyserNode.frequencyBinCount);
-    this.analyserNode.getByteFrequencyData(dataArray);
-    return dataArray;
+    return this.engine.getFrequencyData?.() ?? new Uint8Array(0);
   }
 
   /**
-   * 设置音频输出设备
-   * @param deviceId 设备 ID
+   * 获取低频音量 [0.0-1.0]
    */
-  public async setSinkId(deviceId: string) {
-    if (deviceId === "default") return;
-    try {
-      // 优先在 Context 上设置
-      if (this.isInitialized && this.audioCtx && typeof this.audioCtx.setSinkId === "function") {
-        await this.audioCtx.setSinkId(deviceId);
-        return;
-      }
-      // 回退到在 HTMLAudioElement 上设置
-      if (this.audioElement && typeof this.audioElement.setSinkId === "function") {
-        await this.audioElement.setSinkId(deviceId);
-      }
-    } catch (error) {
-      console.error("AudioManager: 设置输出设备失败", error);
-    }
+  public getLowFrequencyVolume(): number {
+    return this.engine.getLowFrequencyVolume?.() ?? 0;
+  }
+
+  /**
+   * 设置高通滤波器频率
+   */
+  public setHighPassFilter(frequency: number, rampTime: number = 0): void {
+    this.engine.setHighPassFilter?.(frequency, rampTime);
+  }
+
+  public setHighPassQ(q: number): void {
+    this.engine.setHighPassQ?.(q);
+  }
+
+  /**
+   * 设置低通滤波器频率
+   */
+  public setLowPassFilter(frequency: number, rampTime: number = 0): void {
+    this.engine.setLowPassFilter?.(frequency, rampTime);
+  }
+
+  public setLowPassQ(q: number): void {
+    this.engine.setLowPassQ?.(q);
   }
 
   /**
    * 设置均衡器增益
-   * @param index 频段索引 (0-9)
-   * @param value 增益值 (-40 to 40)
    */
-  public setFilterGain(index: number, value: number) {
-    if (this.filters[index]) {
-      this.filters[index].gain.value = value;
-    }
+  public setFilterGain(index: number, value: number): void {
+    this.engine.setFilterGain?.(index, value);
   }
 
   /**
    * 获取当前均衡器设置
-   * @returns 各频段增益值数组
    */
   public getFilterGains(): number[] {
-    return this.filters.map((f) => f.gain.value);
+    return this.engine.getFilterGains?.() ?? [];
   }
 
   /**
-   * 获取音频总时长
-   * @returns 总时长（秒）
+   * 获取音频总时长（秒）
    */
-  public get duration() {
-    return this.audioElement?.duration || 0;
+  public get duration(): number {
+    return this.engine.duration;
   }
 
   /**
-   * 获取当前播放时间
-   * @returns 当前播放时间（秒）
+   * 获取当前播放时间（秒）
    */
-  public get currentTime() {
-    return this.audioElement?.currentTime || 0;
+  public get currentTime(): number {
+    return this.engine.currentTime;
   }
 
   /**
    * 获取是否暂停状态
-   * @returns 是否暂停
    */
-  public get paused() {
-    return this.audioElement?.paused ?? true;
+  public get paused(): boolean {
+    return this.engine.paused;
   }
 
   /**
    * 获取当前播放地址
-   * @returns 当前播放地址
    */
-  public get src() {
-    return this.audioElement?.src || "";
+  public get src(): string {
+    return this.engine.src;
   }
 
   /**
    * 获取音频错误码
-   * @returns 错误码
    */
   public getErrorCode(): number {
-    if (!this.audioElement?.error) return 0;
+    return this.engine.getErrorCode();
+  }
 
-    // 参考 HTML Audio Element 错误码
-    // MEDIA_ERR_ABORTED (1): 用户中止了加载
-    // MEDIA_ERR_NETWORK (2): 网络错误或资源过期
-    // MEDIA_ERR_DECODE (3): 解码错误
-    // MEDIA_ERR_SRC_NOT_SUPPORTED (4): 不支持的格式
-    switch (this.audioElement.error.code) {
-      case MediaError.MEDIA_ERR_ABORTED:
-        return 1;
-      case MediaError.MEDIA_ERR_NETWORK:
-        return 2; // 网络错误或资源过期
-      case MediaError.MEDIA_ERR_DECODE:
-        return 3;
-      case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-        return 4;
-      default:
-        return 0;
+  /**
+   * 解除 MPV 强制暂停状态
+   * 仅在 MPV 引擎下有效
+   */
+  public clearForcePaused(): void {
+    if (this.engine instanceof MpvPlayer) {
+      this.engine.clearForcePaused();
+    }
+  }
+
+  /**
+   * 设置 MPV 期望的 Seek 位置
+   * 仅在 MPV 引擎下有效
+   */
+  public setPendingSeek(seconds: number | null): void {
+    if (this.engine instanceof MpvPlayer) {
+      this.engine.setPendingSeek(seconds);
+    }
+  }
+
+  /**
+   * 切换播放/暂停
+   */
+  public togglePlayPause(): void {
+    if (this.paused) {
+      this.resume();
+    } else {
+      this.pause();
     }
   }
 }
 
-let instance: AudioManager | null = null;
+const AUDIO_MANAGER_KEY = "__SPLAYER_AUDIO_MANAGER__";
 
 /**
  * 获取 AudioManager 实例
  * @returns AudioManager
  */
 export const useAudioManager = (): AudioManager => {
-  if (!instance) instance = new AudioManager();
-  return instance;
+  const win = window as Window & { [AUDIO_MANAGER_KEY]?: AudioManager };
+  if (!win[AUDIO_MANAGER_KEY]) {
+    const settingStore = useSettingStore();
+    win[AUDIO_MANAGER_KEY] = new AudioManager(
+      settingStore.playbackEngine,
+      settingStore.audioEngine,
+    );
+
+    // 监听音频延迟补偿变化
+    watch(
+      () => settingStore.audioDelayCompensation,
+      (offset) => {
+        win[AUDIO_MANAGER_KEY]?.setAudioDelayCompensation(offset);
+      },
+      { immediate: true }, // 立即执行一次以应用初始值
+    );
+
+    console.log(`[AudioManager] 创建新实例, engine: ${win[AUDIO_MANAGER_KEY].engineType}`);
+  }
+  return win[AUDIO_MANAGER_KEY];
 };

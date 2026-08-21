@@ -6,6 +6,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+task.md
 
 node_modules
 .DS_Store
@@ -15,6 +16,8 @@ coverage
 *.local
 out
 .env
+target
+*.node
 
 # Editor directories and files
 .vscode/*
@@ -28,3 +31,12 @@ out
 *.sw?
 .env.development
 .env.production
+
+# Docs
+docs/.vitepress/cache
+docs/.vitepress/dist
+
+# AI
+.trae/*
+.cursor/*
+.claude/*

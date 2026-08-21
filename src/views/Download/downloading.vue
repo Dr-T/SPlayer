@@ -73,6 +73,7 @@
             <!-- 操作 -->
             <n-flex align="center" justify="center" class="actions">
               <n-button
+                v-if="item.status === 'failed'"
                 type="primary"
                 secondary
                 strong
@@ -82,12 +83,7 @@
                   <SvgIcon name="Refresh" />
                 </template>
               </n-button>
-              <n-button
-                type="error"
-                secondary
-                strong
-                @click="downloadManager.removeDownload(item.song.id)"
-              >
+              <n-button type="error" secondary strong @click="handleRemoveDownload(item.song.id)">
                 <template #icon>
                   <SvgIcon name="Close" />
                 </template>
@@ -118,6 +114,11 @@ const sortedDownloadingSongs = computed(() => {
     return getPriority(a.status) - getPriority(b.status);
   });
 });
+
+const handleRemoveDownload = (id: number) => {
+  downloadManager.removeDownload(id);
+  window.$message.success("已删除下载任务");
+};
 </script>
 
 <style lang="scss" scoped>
@@ -134,7 +135,7 @@ const sortedDownloadingSongs = computed(() => {
       align-items: center;
       padding: 0 12px;
       height: 40px;
-      background-color: var(--background-hex);
+      // background-color: var(--background-hex);
       font-weight: normal;
 
       .n-text {

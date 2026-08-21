@@ -1,19 +1,22 @@
 <template>
   <div
+    ref="playerRef"
     :class="[
       'main-player',
       {
         show: musicStore.isHasPlayer && statusStore.showPlayBar,
+        player: statusStore.showFullPlayer,
       },
     ]"
   >
     <!-- 进度条 -->
     <PlayerSlider />
     <!-- 信息 -->
-    <div class="play-data">
+    <div :class="['play-data', { 'hidden-cover': settingStore.hiddenCovers.player }]">
       <!-- 封面 -->
-      <Transition name="fade" mode="out-in">
+      <Transition name="fade">
         <div
+          v-if="!settingStore.hiddenCovers.player"
           :key="musicStore.playSong.cover"
           class="cover"
           @click.stop="statusStore.showFullPlayer = true"
@@ -42,9 +45,15 @@
             <!-- 名称 -->
             <TextContainer
               :key="musicStore.playSong.name"
-              :text="musicStore.playSong.name"
+              :text="
+                settingStore.hideBracketedContent
+                  ? removeBrackets(musicStore.playSong.name)
+                  : musicStore.playSong.name
+              "
               :speed="0.2"
               class="name"
+              style="cursor: pointer"
+              @click.stop="settingStore.hiddenCovers.player && (statusStore.showFullPlayer = true)"
             />
             <!-- 倍速 -->
             <n-tag
@@ -71,44 +80,82 @@
               <SvgIcon name="FormatList" :size="20" :depth="2" class="more" />
             </n-dropdown>
           </div>
-          <Transition name="fade" mode="out-in">
-            <!-- 歌词 -->
-            <TextContainer
-              v-if="isShowLyrics && instantLyrics"
-              :key="instantLyrics"
-              :text="instantLyrics"
-              :speed="0.2"
-              :delay="500"
-              class="lyric"
-            />
-            <!-- 歌手 -->
-            <div v-else class="artists">
-              <n-text v-if="musicStore.playSong.type === 'radio'" class="ar-item">播客电台</n-text>
-              <template v-else-if="Array.isArray(musicStore.playSong.artists)">
-                <n-text
-                  v-for="(item, index) in musicStore.playSong.artists"
-                  :key="index"
-                  class="ar-item"
-                  @click="openJumpArtist(musicStore.playSong.artists)"
-                >
-                  {{ item.name }}
-                </n-text>
-              </template>
-              <n-text v-else class="ar-item" @click="openJumpArtist(musicStore.playSong.artists)">
-                {{ musicStore.playSong.artists || "未知艺术家" }}
-              </n-text>
-            </div>
-          </Transition>
+          <div class="lyric-container">
+            <Transition
+              :name="settingStore.lyricTransition === 'fade' ? 'fade' : 'lyric-slide'"
+              :mode="settingStore.lyricTransition === 'fade' ? 'out-in' : undefined"
+            >
+              <!-- 歌词 -->
+              <TextContainer
+                v-if="isShowLyrics && instantLyrics"
+                :key="instantLyrics"
+                :text="instantLyrics"
+                :speed="0.5"
+                :delay="500"
+                class="lyric"
+              />
+              <!-- 歌手 -->
+              <div v-else class="artists">
+                <TextContainer :speed="0.5" class="artists-container">
+                  <n-text
+                    v-if="musicStore.playSong.type === 'radio'"
+                    class="ar-item"
+                    @click="showCreatorTip"
+                  >
+                    {{ musicStore.playSong.dj?.creator || "未知艺术家" }}
+                  </n-text>
+                  <template v-else-if="Array.isArray(musicStore.playSong.artists)">
+                    <n-text
+                      v-for="(item, index) in musicStore.playSong.artists"
+                      :key="index"
+                      class="ar-item"
+                      @click="openJumpArtist(musicStore.playSong.artists, item.id)"
+                    >
+                      {{
+                        settingStore.hideBracketedContent ? removeBrackets(item.name) : item.name
+                      }}
+                    </n-text>
+                  </template>
+                  <n-text
+                    v-else
+                    class="ar-item"
+                    @click="openJumpArtist(musicStore.playSong.artists)"
+                  >
+                    {{
+                      settingStore.hideBracketedContent
+                        ? removeBrackets(musicStore.playSong.artists)
+                        : musicStore.playSong.artists || "未知艺术家"
+                    }}
+                  </n-text>
+                </TextContainer>
+              </div>
+            </Transition>
+          </div>
         </div>
       </Transition>
     </div>
     <!-- 控制 -->
-    <div class="play-control">
+    <n-flex :size="8" align="center" justify="center" class="play-control">
+      <!-- 随机按钮 -->
+      <template v-if="musicStore.playSong.type !== 'radio' && !statusStore.personalFmMode">
+        <div class="play-icon" @click.stop="player.toggleShuffle()">
+          <SvgIcon
+            :name="statusStore.shuffleIcon"
+            :size="20"
+            :depth="statusStore.shuffleMode === 'off' ? 3 : 1"
+          />
+        </div>
+      </template>
       <!-- 不喜欢 -->
       <div
         v-if="statusStore.personalFmMode"
         class="play-icon"
-        v-debounce="() => songManager.personalFMTrash(musicStore.personalFMSong?.id)"
+        v-debounce="
+          () =>
+            songManager.personalFMTrash(musicStore.personalFMSong?.id, () =>
+              player.nextOrPrev('next'),
+            )
+        "
       >
         <SvgIcon class="icon" :size="18" name="ThumbDown" />
       </div>
@@ -142,7 +189,17 @@
       <div class="play-icon" v-debounce="() => player.nextOrPrev('next')">
         <SvgIcon :size="26" name="SkipNext" />
       </div>
-    </div>
+      <!-- 循环按钮 -->
+      <template v-if="musicStore.playSong.type !== 'radio' && !statusStore.personalFmMode">
+        <div class="play-icon" @click.stop="player.toggleRepeat()">
+          <SvgIcon
+            :name="statusStore.repeatIcon"
+            :size="20"
+            :depth="statusStore.repeatMode === 'off' ? 3 : 1"
+          />
+        </div>
+      </template>
+    </n-flex>
     <!-- 功能 -->
     <Transition name="fade" mode="out-in">
       <n-flex
@@ -160,9 +217,9 @@
             class="time-container"
             vertical
           >
-            <div class="time">
-              <n-text depth="2">{{ msToTime(statusStore.currentTime) }}</n-text>
-              <n-text depth="2">{{ msToTime(statusStore.duration) }}</n-text>
+            <div class="time" @click="toggleTimeFormat">
+              <n-text depth="2">{{ timeDisplay[0] }}</n-text>
+              <n-text depth="2">{{ timeDisplay[1] }}</n-text>
             </div>
             <!-- 定时关闭 -->
             <n-tag
@@ -187,20 +244,24 @@
 </template>
 
 <script setup lang="ts">
-import type { DropdownOption } from "naive-ui";
-import { useMusicStore, useStatusStore, useDataStore, useSettingStore } from "@/stores";
-import { msToTime, convertSecondsToTime } from "@/utils/time";
-import { renderIcon, coverLoaded, copyData } from "@/utils/helper";
+import { usePlayerController } from "@/core/player/PlayerController";
+import { useSongManager } from "@/core/player/SongManager";
+import { useDataStore, useMusicStore, useSettingStore, useStatusStore } from "@/stores";
 import { toLikeSong } from "@/utils/auth";
+import { useTimeFormat } from "@/composables/useTimeFormat";
+import { useSwipe } from "@vueuse/core";
+import { copyData, coverLoaded, renderIcon, getShareUrl } from "@/utils/helper";
 import {
   openAutoClose,
   openChangeRate,
+  openCopySongInfo,
   openDownloadSong,
   openJumpArtist,
   openPlaylistAdd,
 } from "@/utils/modal";
-import { useSongManager } from "@/core/player/SongManager";
-import { usePlayerController } from "@/core/player/PlayerController";
+import { convertSecondsToTime } from "@/utils/time";
+import { removeBrackets } from "@/utils/format";
+import type { DropdownOption } from "naive-ui";
 
 const router = useRouter();
 const dataStore = useDataStore();
@@ -210,6 +271,24 @@ const settingStore = useSettingStore();
 
 const player = usePlayerController();
 const songManager = useSongManager();
+
+const { timeDisplay, toggleTimeFormat } = useTimeFormat();
+
+const playerRef = ref<HTMLElement | null>(null);
+
+// 触摸滑动切换歌曲
+const { direction } = useSwipe(playerRef, {
+  threshold: 50,
+  onSwipeEnd: () => {
+    if (direction.value === "left") {
+      // 左滑
+      player.nextOrPrev("next");
+    } else if (direction.value === "right") {
+      // 右滑
+      player.nextOrPrev("prev");
+    }
+  },
+});
 
 // 歌曲更多操作
 const songMoreOptions = computed<DropdownOption[]>(() => {
@@ -242,15 +321,20 @@ const songMoreOptions = computed<DropdownOption[]>(() => {
           icon: renderIcon("Copy", { size: 18 }),
         },
         {
+          key: "copy-song-info",
+          label: "复制更多信息",
+          show: !isLocal && isSong,
+          props: {
+            onClick: () => openCopySongInfo(song.id),
+          },
+          icon: renderIcon("FormatList", { size: 18 }),
+        },
+        {
           key: "share",
           label: `分享${song.type === "song" ? "歌曲" : "节目"}链接`,
           show: !isLocal,
           props: {
-            onClick: () =>
-              copyData(
-                `https://music.163.com/#/${song.type}?id=${song.id}`,
-                "已复制分享链接到剪切板",
-              ),
+            onClick: () => copyData(getShareUrl(song.type, song.id), "已复制分享链接到剪切板"),
           },
           icon: renderIcon("Share", { size: 18 }),
         },
@@ -259,6 +343,7 @@ const songMoreOptions = computed<DropdownOption[]>(() => {
     {
       key: "search",
       label: "同名搜索",
+      show: settingStore.useOnlineService,
       props: {
         onClick: () => router.push({ name: "search", query: { keyword: song.name } }),
       },
@@ -289,9 +374,18 @@ const songMoreOptions = computed<DropdownOption[]>(() => {
     {
       key: "download",
       label: "下载歌曲",
-      show: !isLocal && isSong,
+      show: statusStore.isDeveloperMode && !isLocal && isSong,
       props: { onClick: () => openDownloadSong(musicStore.playSong) },
       icon: renderIcon("Download"),
+    },
+    {
+      key: "wiki",
+      label: "音乐百科",
+      show: !isLocal && isSong,
+      props: {
+        onClick: () => router.push({ name: "song-wiki", query: { id: musicStore.playSong.id } }),
+      },
+      icon: renderIcon("Info"),
     },
     {
       key: "comment",
@@ -299,10 +393,9 @@ const songMoreOptions = computed<DropdownOption[]>(() => {
       show: !isLocal,
       props: {
         onClick: () => {
-          statusStore.$patch({
-            showFullPlayer: true,
-            showPlayerComment: true,
-          });
+          const id = musicStore.playSong.id;
+          const type = musicStore.playSong.type === "radio" ? 4 : 0;
+          router.push({ name: "comment", query: { id, type } });
         },
       },
       icon: renderIcon("Message"),
@@ -325,7 +418,7 @@ const isShowLyrics = computed(() => {
 
 // 当前实时歌词
 const instantLyrics = computed(() => {
-  const isYrc = musicStore.songLyric.yrcData?.length && settingStore.showYrc;
+  const isYrc = musicStore.songLyric.yrcData?.length && settingStore.showWordLyrics;
   const content = isYrc
     ? musicStore.songLyric.yrcData[statusStore.lyricIndex]
     : musicStore.songLyric.lrcData[statusStore.lyricIndex];
@@ -334,6 +427,9 @@ const instantLyrics = computed(() => {
     ? `${contentStr}（ ${content?.translatedLyric} ）`
     : contentStr || "";
 });
+
+// 暂不支持查看主播主页
+const showCreatorTip = () => window.$message.info("暂不支持查看主播主页");
 </script>
 
 <style lang="scss" scoped>
@@ -345,7 +441,6 @@ const instantLyrics = computed(() => {
   padding: 0 15px;
   width: 100%;
   background-color: var(--surface-container-hex);
-  // background-color: rgba(var(--surface-container), 0.28);
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
@@ -365,26 +460,31 @@ const instantLyrics = computed(() => {
     --n-handle-size: 14px;
   }
   .play-data {
+    position: relative;
     display: flex;
     flex-direction: row;
+    align-items: center;
     overflow: hidden;
+    height: 100%;
     max-width: 640px;
+    padding-left: 68px;
     .cover {
-      position: relative;
+      position: absolute;
       display: flex;
       align-items: center;
       justify-content: center;
-      width: 55px;
-      height: 55px;
-      min-width: 55px;
+      left: 0;
+      width: 56px;
+      height: 56px;
+      min-width: 56px;
       border-radius: 8px;
       overflow: hidden;
       margin-right: 12px;
       transition: opacity 0.2s;
       cursor: pointer;
       :deep(img) {
-        width: 55px;
-        height: 55px;
+        width: 56px;
+        height: 56px;
         opacity: 0;
         transition:
           transform 0.3s,
@@ -424,7 +524,6 @@ const instantLyrics = computed(() => {
       .data {
         display: flex;
         align-items: center;
-        margin-top: 2px;
         .name {
           font-weight: bold;
           font-size: 16px;
@@ -456,52 +555,65 @@ const instantLyrics = computed(() => {
           flex-shrink: 0;
         }
       }
-      .artists {
+      .lyric-container {
+        position: relative;
+        height: 22px;
         margin-top: 2px;
-        display: -webkit-box;
-        line-clamp: 1;
-        -webkit-box-orient: vertical;
-        -webkit-line-clamp: 1;
         overflow: hidden;
-        word-break: break-all;
-        .ar-item {
-          display: inline-flex;
-          transition: color 0.3s;
-          cursor: pointer;
-          &::after {
-            content: "/";
-            margin: 0 6px;
-            opacity: 0.6;
-            transition: none;
-          }
-          &:last-child {
+        .lyric,
+        .artists {
+          margin-top: 0;
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          display: flex;
+          align-items: center;
+        }
+      }
+      .artists {
+        width: 100%;
+        overflow: hidden;
+
+        .artists-container {
+          .ar-item {
+            display: inline-flex;
+            transition: color 0.3s;
+            cursor: pointer;
+            white-space: nowrap;
+
             &::after {
-              display: none;
+              content: "/";
+              margin: 0 6px;
+              opacity: 0.6;
+              transition: none;
             }
-          }
-          &:hover {
-            color: var(--primary-hex);
-            &::after {
-              color: var(--n-close-icon-color);
+            &:last-child {
+              &::after {
+                display: none;
+              }
+            }
+            &:hover {
+              color: var(--primary-hex);
+              &::after {
+                color: var(--n-close-icon-color);
+              }
             }
           }
         }
       }
-      .lyric {
-        margin-top: 2px;
-      }
+    }
+    &.hidden-cover {
+      padding-left: 0;
     }
   }
   .play-control {
-    display: flex;
-    flex-direction: row;
-    justify-content: center;
-    align-items: center;
-    margin: 0 40px;
+    margin: 0 60px;
     .play-pause {
       --n-width: 44px;
       --n-height: 44px;
-      margin: 0 12px;
+      margin: 0 4px;
       transition:
         background-color 0.3s,
         transform 0.3s;
@@ -527,6 +639,7 @@ const instantLyrics = computed(() => {
         background-color 0.3s,
         transform 0.3s;
       cursor: pointer;
+      margin: 0 2px;
       .n-icon {
         color: var(--primary-hex);
       }
@@ -550,6 +663,7 @@ const instantLyrics = computed(() => {
       }
     }
     .time {
+      cursor: pointer;
       display: flex;
       align-items: center;
       font-size: 12px;
@@ -562,6 +676,26 @@ const instantLyrics = computed(() => {
             margin: 0 4px;
           }
         }
+      }
+      &:hover {
+        text-decoration: underline;
+        text-decoration-color: var(--primary-hex);
+      }
+    }
+  }
+  @media (max-width: 1024px) {
+    .play-menu {
+      .time-container {
+        display: none !important;
+      }
+    }
+  }
+  @media (max-width: 810px) {
+    grid-template-columns: 1fr auto auto;
+    .play-control {
+      margin: 0 0 0 12px;
+      .play-icon {
+        display: none;
       }
     }
   }

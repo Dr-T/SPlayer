@@ -2,15 +2,14 @@
 <template>
   <div class="radio-list">
     <ListDetail
-      :detail-data="detailData"
-      :list-data="listData"
+      :detail-data="detailData?.id === radioId ? detailData : null"
+      :list-data="detailData?.id === radioId ? listData : []"
       :loading="showLoading"
       :list-scrolling="listScrolling"
       :search-value="searchValue"
       :config="listConfig"
       :play-button-text="playButtonText"
       :more-options="moreOptions"
-      :show-comment-tab="true"
       @update:search-value="handleSearchUpdate"
       @play-all="playAllSongs"
       @tab-change="handleTabChange"
@@ -30,42 +29,43 @@
         </n-button>
       </template>
     </ListDetail>
-    <Transition name="fade" mode="out-in">
-      <!-- 歌曲列表 -->
-      <template v-if="currentTab === 'songs'">
-        <SongList
-          v-if="!searchValue || searchData?.length"
-          :data="displayData"
-          :loading="loading"
-          :height="songListHeight"
-          :radioId="radioId"
-          :doubleClickAction="searchData?.length ? 'add' : 'all'"
-          type="radio"
-          @scroll="handleListScroll"
-        />
-        <n-empty
-          v-else
-          :description="`搜不到关于 ${searchValue} 的任何歌曲呀`"
-          style="margin-top: 60px"
-          size="large"
-        >
-          <template #icon>
-            <SvgIcon name="SearchOff" />
-          </template>
-        </n-empty>
-      </template>
-      <!-- 评论 -->
-      <template v-else>
-        <ListComment :id="radioId" :type="7" :height="songListHeight" />
-      </template>
-    </Transition>
+    <!-- 歌曲列表 -->
+    <template v-if="currentTab === 'songs'">
+      <SongList
+        v-if="!searchValue || searchData?.length"
+        :data="detailData?.id === radioId ? displayData : []"
+        :loading="loading"
+        :height="songListHeight"
+        :radioId="radioId"
+        :doubleClickAction="searchData?.length ? 'add' : 'all'"
+        type="radio"
+        @scroll="handleListScroll"
+      />
+      <n-empty
+        v-else
+        :description="`搜不到关于 ${searchValue} 的任何歌曲呀`"
+        style="margin-top: 60px"
+        size="large"
+      >
+        <template #icon>
+          <SvgIcon name="SearchOff" />
+        </template>
+      </n-empty>
+    </template>
+    <!-- 评论 -->
+    <ListComment
+      v-show="currentTab === 'comments'"
+      :id="radioId"
+      :type="7"
+      :height="songListHeight"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import type { DropdownOption, MessageReactive } from "naive-ui";
 import { formatCoverList, formatSongsList } from "@/utils/format";
-import { renderIcon, copyData } from "@/utils/helper";
+import { renderIcon, copyData, getShareUrl } from "@/utils/helper";
 import { useDataStore } from "@/stores";
 import { radioAllProgram, radioDetail } from "@/api/radio";
 import { useListDetail } from "@/composables/List/useListDetail";
@@ -73,6 +73,7 @@ import { useListSearch } from "@/composables/List/useListSearch";
 import { useListScroll } from "@/composables/List/useListScroll";
 import { useListActions } from "@/composables/List/useListActions";
 import { toSubRadio } from "@/utils/auth";
+import { useListDataCache, type ListCacheData } from "@/composables/List/useListDataCache";
 import ListComment from "@/components/List/ListComment.vue";
 
 const router = useRouter();
@@ -92,6 +93,7 @@ const { searchValue, searchData, displayData, clearSearch, performSearch } =
   useListSearch(listData);
 const { listScrolling, handleListScroll } = useListScroll();
 const { playAllSongs: playAllSongsAction } = useListActions();
+const { saveCache, loadCache, checkNeedsUpdate } = useListDataCache();
 
 // 电台 ID
 const oldRadioId = ref<number>(0);
@@ -149,6 +151,14 @@ const playButtonText = computed(() => {
 // 更多操作
 const moreOptions = computed<DropdownOption[]>(() => [
   {
+    label: "刷新缓存",
+    key: "refresh-cache",
+    props: {
+      onClick: () => getRadioDetail(radioId.value, true),
+    },
+    icon: renderIcon("Refresh"),
+  },
+  {
     label: "刷新播客",
     key: "refresh",
     props: {
@@ -160,8 +170,7 @@ const moreOptions = computed<DropdownOption[]>(() => [
     label: "复制分享链接",
     key: "copy",
     props: {
-      onClick: () =>
-        copyData(`https://music.163.com/#/djradio?id=${radioId.value}`, "已复制分享链接到剪贴板"),
+      onClick: () => copyData(getShareUrl("djradio", radioId.value), "已复制分享链接到剪贴板"),
     },
     icon: renderIcon("Share"),
   },
@@ -178,7 +187,7 @@ const moreOptions = computed<DropdownOption[]>(() => [
 ]);
 
 // 获取播客基础信息
-const getRadioDetail = async (id: number) => {
+const getRadioDetail = async (id: number, refresh: boolean = false) => {
   if (!id) return;
   // 设置当前请求的播客 ID，用于防止竞态条件
   currentRequestId.value = id;
@@ -186,8 +195,26 @@ const getRadioDetail = async (id: number) => {
   setLoading(true);
   // 清空数据
   clearSearch();
+
+  // 1. 尝试读取缓存
+  if (!refresh) {
+    const cached = await loadCache("radio", id);
+    if (cached) {
+      setDetailData(cached.detail);
+      setListData(cached.songs);
+      setLoading(false);
+
+      // 后台检查更新
+      backgroundCheck(id, cached);
+      return;
+    }
+  }
+
   // 获取播客详情
-  setDetailData(null);
+  if (detailData.value?.id !== id || refresh) {
+    setDetailData(null);
+    setListData([]);
+  }
   const detail = await radioDetail(id);
   if (currentRequestId.value !== id) return;
   setDetailData(formatCoverList(detail.data)[0]);
@@ -195,13 +222,31 @@ const getRadioDetail = async (id: number) => {
   await getRadioAllProgram(id, detailData.value?.count as number);
 };
 
+// 后台检查更新
+const backgroundCheck = async (id: number, cached: ListCacheData) => {
+  try {
+    const detail = await radioDetail(id);
+    if (currentRequestId.value !== id) return;
+
+    const latestDetail = formatCoverList(detail.data)[0];
+
+    if (checkNeedsUpdate(cached, latestDetail)) {
+      console.log("Radio cache expired, refreshing...");
+      getRadioDetail(id, true);
+    }
+  } catch (e) {
+    console.error("Radio background check failed", e);
+  }
+};
+
 // 获取播客全部歌曲
 const getRadioAllProgram = async (id: number, count: number) => {
   if (!id || !count) return;
   setLoading(true);
-  setListData([]);
   // 加载提示
   if (count > 500) loadingMsgShow();
+  // 强制清空列表，防止重复
+  setListData([]);
   // 循环获取
   let offset: number = 0;
   const limit: number = 500;
@@ -224,6 +269,11 @@ const getRadioAllProgram = async (id: number, count: number) => {
     loadingMsgShow(false);
     return;
   }
+  // 保存缓存
+  if (detailData.value && listData.value.length > 0) {
+    saveCache("radio", id, detailData.value, listData.value);
+  }
+
   // 关闭加载
   loadingMsgShow(false);
 };
@@ -263,6 +313,7 @@ const loadingMsgShow = (show: boolean = true) => {
 onBeforeRouteUpdate((to) => {
   const id = Number(to.query.id as string);
   if (id) {
+    currentTab.value = "songs";
     oldRadioId.value = id;
     getRadioDetail(id);
   }
@@ -273,11 +324,8 @@ onActivated(() => {
   if (oldRadioId.value === 0) {
     oldRadioId.value = radioId.value;
   } else {
-    // 是否不相同
-    const isSame = oldRadioId.value === radioId.value;
     oldRadioId.value = radioId.value;
-    // 刷新播客
-    if (!isSame) getRadioDetail(radioId.value);
+    getRadioDetail(radioId.value, false);
   }
 });
 

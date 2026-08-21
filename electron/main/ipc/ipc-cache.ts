@@ -99,6 +99,14 @@ const initCacheIpc = (): void => {
     },
   );
 
+  // 清空所有缓存
+  ipcMain.handle("cache-clear-all", (): Promise<CacheIpcResult<null>> => {
+    return withErrorCatch(async () => {
+      await cacheService.clearAll();
+      return null;
+    });
+  });
+
   // 获取所有缓存类型的总大小
   ipcMain.handle("cache-size", (): Promise<CacheIpcResult<number>> => {
     return withErrorCatch(async () => {
@@ -107,14 +115,17 @@ const initCacheIpc = (): void => {
   });
 
   // 检查是否存在音乐缓存
-  ipcMain.handle("music-cache-check", async (_event, id: number | string, quality?: string) => {
-    try {
-      return await musicCacheService.hasCache(id, quality);
-    } catch (error) {
-      processLog.error("Check music cache failed:", error);
-      return null;
-    }
-  });
+  ipcMain.handle(
+    "music-cache-check",
+    async (_event, id: number | string, quality?: string, md5?: string) => {
+      try {
+        return await musicCacheService.hasCache(id, quality, md5);
+      } catch (error) {
+        processLog.error("Check music cache failed:", error);
+        return null;
+      }
+    },
+  );
 
   // 下载并缓存音乐
   ipcMain.handle(

@@ -1,69 +1,135 @@
+import type { RepeatModeType, ShuffleModeType } from "@shared";
 import {
   app,
-  Tray,
+  type BrowserWindow,
   Menu,
-  MenuItemConstructorOptions,
-  BrowserWindow,
+  type MenuItemConstructorOptions,
   nativeImage,
+  NativeImage,
   nativeTheme,
+  Tray,
 } from "electron";
-import { isWin, appName } from "../utils/config";
 import { join } from "path";
 import { trayLog } from "../logger";
 import { useStore } from "../store";
+import { appName, isMac, isWin } from "../utils/config";
 import lyricWindow from "../windows/lyric-window";
 
 // 播放模式
-type PlayMode = "repeat" | "repeat-once" | "shuffle";
 type PlayState = "play" | "pause" | "loading";
 
+let repeatMode: RepeatModeType = "list";
+let shuffleMode: ShuffleModeType = "off";
+
 // 全局数据
-let playMode: PlayMode = "repeat";
 let playState: PlayState = "pause";
 let playName: string = "未播放歌曲";
 let likeSong: boolean = false;
 let desktopLyricShow: boolean = false;
 let desktopLyricLock: boolean = false;
+let taskbarLyricShow: boolean = false;
 
 export interface MainTray {
   setTitle(title: string): void;
-  setPlayMode(mode: PlayMode): void;
+  setPlayMode(repeat: RepeatModeType, shuffle: ShuffleModeType): void;
   setLikeState(like: boolean): void;
   setPlayState(state: PlayState): void;
   setPlayName(name: string): void;
   setDesktopLyricShow(show: boolean): void;
   setDesktopLyricLock(lock: boolean): void;
+  setTaskbarLyricShow(show: boolean): void;
+  initTrayMenu(): void;
   destroyTray(): void;
 }
 
 // 托盘单例
 let mainTrayInstance: MainTray | null = null;
 
-// 托盘图标
-const trayIcon = (filename: string) => {
-  // const rootPath = isDev
-  //   ? join(__dirname, "../../public/icons/tray")
-  //   : join(app.getAppPath(), "../../public/icons/tray");
-  // return nativeImage.createFromPath(join(rootPath, filename));
-  return nativeImage.createFromPath(join(__dirname, `../../public/icons/tray/${filename}`));
+/**
+ * macOS 托盘图标获取函数
+ * 使用模板图像实现自动颜色适配
+ */
+const getTrayIcon = (): NativeImage | null => {
+  if (!isMac) return null;
+  const filename = "tray-light.png";
+  const iconPath = join(__dirname, `../../public/icons/tray/${filename}`);
+  const fallbackIconPath = join(__dirname, `../../resources/icon.png`);
+
+  try {
+    let image = nativeImage.createFromPath(iconPath);
+
+    image = image.resize({ width: 19, height: 19 });
+
+    image.setTemplateImage(true);
+
+    return image;
+  } catch (error) {
+    trayLog.error(`获取托盘图标失败: ${error}`);
+    try {
+      let fallbackImage = nativeImage.createFromPath(fallbackIconPath);
+      fallbackImage = fallbackImage.resize({ width: 19, height: 19 });
+      fallbackImage.setTemplateImage(true);
+      return fallbackImage;
+    } catch (fallbackError) {
+      trayLog.error(`备用托盘图标加载也失败: ${fallbackError}`);
+      return null;
+    }
+  }
+};
+
+/**
+ * 获取 macOS 菜单图标
+ * 根据系统主题选择合适的图标
+ */
+const getMenuIcon = (iconName: string): NativeImage | undefined => {
+  const isDark = nativeTheme.shouldUseDarkColors;
+  const suffix = isDark ? "dark" : "light";
+  const iconPath = join(__dirname, `../../public/icons/tray/${iconName}-${suffix}.png`);
+  try {
+    const image = nativeImage.createFromPath(iconPath);
+    return image.resize({ width: 16, height: 16 });
+  } catch (error) {
+    trayLog.warn(`无法加载菜单图标: ${iconPath}`, error);
+    // 后备方案：尝试加载默认图标
+    const defaultPath = join(__dirname, `../../public/icons/tray/${iconName}-dark.png`);
+    try {
+      const image = nativeImage.createFromPath(defaultPath);
+      return image.resize({ width: 16, height: 16 });
+    } catch (fallbackError) {
+      trayLog.error(`无法加载菜单图标后备方案: ${defaultPath}`, fallbackError);
+      return undefined;
+    }
+  }
 };
 
 // 托盘菜单
 const createTrayMenu = (win: BrowserWindow): MenuItemConstructorOptions[] => {
-  // 区分明暗图标
-  const showIcon = (iconName: string) => {
-    const isDark = nativeTheme.shouldUseDarkColors;
-    return trayIcon(`${iconName}${isDark ? "-dark" : "-light"}.png`).resize({
-      width: 16,
-      height: 16,
-    });
+  const store = useStore();
+  /**
+   * 获取 {@linkcode RepeatModeType} 对应的显示字符串
+   * @param mode 重复模式
+   * @returns 对应的显示字符串
+   */
+  const getRepeatLabel = (mode: RepeatModeType): string => {
+    switch (mode) {
+      case "one":
+        return "单曲循环";
+      case "off":
+        return "不循环";
+      case "list":
+      default:
+        return "列表循环";
+    }
   };
+
+  const isMacosLyricEnabled = store.get("macos.statusBarLyric.enabled") ?? false;
+
   // 菜单
   const menu: MenuItemConstructorOptions[] = [
     {
       id: "name",
       label: playName,
-      icon: showIcon("music"),
+      icon: getMenuIcon("music"),
       click: () => {
         win.show();
         win.focus();
@@ -73,40 +139,44 @@ const createTrayMenu = (win: BrowserWindow): MenuItemConstructorOptions[] => {
       type: "separator",
     },
     {
-      id: "toogleLikeSong",
+      id: "toggle-like-song",
       label: likeSong ? "从我喜欢中移除" : "添加到我喜欢",
-      icon: showIcon(likeSong ? "like" : "unlike"),
-      click: () => win.webContents.send("toogleLikeSong"),
+      icon: getMenuIcon(likeSong ? "like" : "unlike"),
+      click: () => win.webContents.send("toggle-like-song"),
     },
     {
-      id: "changeMode",
-      label:
-        playMode === "repeat" ? "列表循环" : playMode === "repeat-once" ? "单曲循环" : "随机播放",
-      icon: showIcon(playMode),
+      id: "shuffle",
+      label: shuffleMode === "heartbeat" ? "心动模式" : "随机播放",
+      icon: getMenuIcon("shuffle"),
+      type: "checkbox",
+      checked: shuffleMode !== "off",
+      click: () => win.webContents.send("toggleShuffle"),
+    },
+    {
+      id: "repeatMode",
+      label: getRepeatLabel(repeatMode),
+      icon: getMenuIcon(repeatMode === "one" ? "repeat-once" : "repeat"),
       submenu: [
         {
-          id: "repeat",
           label: "列表循环",
-          icon: showIcon("repeat"),
-          checked: playMode === "repeat",
+          icon: getMenuIcon("repeat"),
           type: "radio",
-          click: () => win.webContents.send("changeMode", "repeat"),
+          checked: repeatMode === "list",
+          click: () => win.webContents.send("changeRepeat", "list"),
         },
         {
-          id: "repeat-once",
           label: "单曲循环",
-          icon: showIcon("repeat-once"),
-          checked: playMode === "repeat-once",
+          icon: getMenuIcon("repeat-once"),
           type: "radio",
-          click: () => win.webContents.send("changeMode", "repeat-once"),
+          checked: repeatMode === "one",
+          click: () => win.webContents.send("changeRepeat", "one"),
         },
         {
-          id: "shuffle",
-          label: "随机播放",
-          icon: showIcon("shuffle"),
-          checked: playMode === "shuffle",
+          label: "关闭循环",
+          icon: getMenuIcon("repeat"),
           type: "radio",
-          click: () => win.webContents.send("changeMode", "shuffle"),
+          checked: repeatMode === "off",
+          click: () => win.webContents.send("changeRepeat", "off"),
         },
       ],
     },
@@ -116,45 +186,50 @@ const createTrayMenu = (win: BrowserWindow): MenuItemConstructorOptions[] => {
     {
       id: "playNext",
       label: "上一曲",
-      icon: showIcon("prev"),
+      icon: getMenuIcon("prev"),
       click: () => win.webContents.send("playPrev"),
     },
     {
       id: "playOrPause",
       label: playState === "pause" ? "播放" : "暂停",
-      icon: showIcon(playState === "pause" ? "play" : "pause"),
+      icon: getMenuIcon(playState === "pause" ? "play" : "pause"),
       click: () => win.webContents.send(playState === "pause" ? "play" : "pause"),
     },
     {
       id: "playNext",
       label: "下一曲",
-      icon: showIcon("next"),
+      icon: getMenuIcon("next"),
       click: () => win.webContents.send("playNext"),
     },
     {
       type: "separator",
     },
     {
-      id: "toogleDesktopLyric",
+      id: "toggle-desktop-lyric",
       label: `${desktopLyricShow ? "关闭" : "开启"}桌面歌词`,
-      icon: showIcon("lyric"),
-      click: () => win.webContents.send("toogleDesktopLyric"),
+      icon: getMenuIcon("lyric"),
+      click: () => win.webContents.send("desktop-lyric:toggle"),
     },
     {
-      id: "toogleDesktopLyricLock",
+      id: "toggle-desktop-lyric-lock",
       label: `${desktopLyricLock ? "解锁" : "锁定"}桌面歌词`,
-      icon: showIcon(desktopLyricLock ? "lock" : "unlock"),
+      icon: getMenuIcon(desktopLyricLock ? "lock" : "unlock"),
       visible: desktopLyricShow,
       click: () => {
         const store = useStore();
-        // 更新锁定状态
         store.set("lyric.config", { ...store.get("lyric.config"), isLock: !desktopLyricLock });
-        // 触发窗口更新
         const config = store.get("lyric.config");
         const lyricWin = lyricWindow.getWin();
         if (!lyricWin) return;
-        lyricWin.webContents.send("update-desktop-lyric-option", config);
+        lyricWin.webContents.send("desktop-lyric:update-option", config);
       },
+    },
+    {
+      id: "toggle-taskbar-lyric",
+      label: `${(isMac ? isMacosLyricEnabled : taskbarLyricShow) ? "关闭" : "开启"}${isMac ? "状态栏" : "任务栏"}歌词`,
+      icon: getMenuIcon("lyric"),
+      visible: isWin || isMac,
+      click: () => win.webContents.send("toggle-taskbar-lyric"),
     },
     {
       type: "separator",
@@ -162,7 +237,7 @@ const createTrayMenu = (win: BrowserWindow): MenuItemConstructorOptions[] => {
     {
       id: "setting",
       label: "全局设置",
-      icon: showIcon("setting"),
+      icon: getMenuIcon("setting"),
       click: () => {
         win.show();
         win.focus();
@@ -175,10 +250,8 @@ const createTrayMenu = (win: BrowserWindow): MenuItemConstructorOptions[] => {
     {
       id: "exit",
       label: "退出",
-      icon: showIcon("power"),
+      icon: getMenuIcon("power"),
       click: () => {
-        // win.close();
-        app.exit(0);
         app.quit();
       },
     },
@@ -197,23 +270,33 @@ class CreateTray implements MainTray {
   private _contextMenu: Menu;
 
   constructor(win: BrowserWindow) {
-    // 托盘图标
-    const icon = trayIcon(isWin ? "tray.ico" : "tray@32.png").resize({
-      height: 32,
-      width: 32,
-    });
-    // 初始化数据
     this._win = win;
-    this._tray = new Tray(icon);
+
+    if (isWin) {
+      const iconPath = join(__dirname, `../../public/icons/tray/tray.ico`);
+      const icon = nativeImage.createFromPath(iconPath).resize({ height: 20, width: 20 });
+      this._tray = new Tray(icon);
+    } else if (isMac) {
+      const icon = getTrayIcon();
+      if (icon) {
+        this._tray = new Tray(icon);
+      } else {
+        throw new Error("Failed to create tray icon for macOS");
+      }
+    } else {
+      const iconPath = join(__dirname, `../../public/icons/tray/tray@32.png`);
+      const icon = nativeImage.createFromPath(iconPath).resize({ height: 20, width: 20 });
+      this._tray = new Tray(icon);
+    }
+
     this._menu = createTrayMenu(this._win);
     this._contextMenu = Menu.buildFromTemplate(this._menu);
-    // 初始化事件
     this.initTrayMenu();
     this.initEvents();
-    this.setTitle(appName);
+    this._tray.setTitle(appName); // 仅设置托盘标题，不设置窗口标题
   }
   // 托盘菜单
-  private initTrayMenu() {
+  public initTrayMenu() {
     this._menu = createTrayMenu(this._win);
     this._contextMenu = Menu.buildFromTemplate(this._menu);
     this._tray.setContextMenu(this._contextMenu);
@@ -222,18 +305,19 @@ class CreateTray implements MainTray {
   private initEvents() {
     // 点击
     this._tray.on("click", () => this._win.show());
-    // 明暗变化
-    nativeTheme.on("updated", () => {
+
+    // 监听系统主题变化，用于菜单图标的更新
+    nativeTheme.addListener("updated", () => {
       this.initTrayMenu();
     });
   }
+
   // 设置标题
   /**
    * 设置标题
    * @param title 标题
    */
   setTitle(title: string) {
-    this._win.setTitle(title);
     this._tray.setTitle(title);
     this._tray.setToolTip(title);
   }
@@ -259,10 +343,12 @@ class CreateTray implements MainTray {
   }
   /**
    * 设置播放模式
-   * @param mode 播放模式
+   * @param repeat 当前的重复播放模式
+   * @param shuffle 当前的随机播放模式
    */
-  setPlayMode(mode: PlayMode) {
-    playMode = mode;
+  setPlayMode(repeat: RepeatModeType, shuffle: ShuffleModeType) {
+    repeatMode = repeat;
+    shuffleMode = shuffle;
     // 更新菜单
     this.initTrayMenu();
   }
@@ -293,6 +379,13 @@ class CreateTray implements MainTray {
     // 更新菜单
     this.initTrayMenu();
   }
+
+  setTaskbarLyricShow(show: boolean) {
+    taskbarLyricShow = show;
+    // 更新菜单
+    this.initTrayMenu();
+  }
+
   /**
    * 销毁托盘
    */
@@ -304,7 +397,6 @@ class CreateTray implements MainTray {
 /**
  * 初始化托盘
  * @param win 主窗口
- * @param lyricWin 歌词窗口
  * @returns 托盘实例
  */
 export const initTray = (win: BrowserWindow) => {

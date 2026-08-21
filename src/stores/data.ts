@@ -1,3 +1,4 @@
+import { toRaw } from "vue";
 import { defineStore } from "pinia";
 import type {
   SongType,
@@ -7,6 +8,7 @@ import type {
   CatType,
   LoginType,
   SongLevelType,
+  AccountType,
 } from "@/types/main";
 import { playlistCatlist } from "@/api/playlist";
 import { cloneDeep, isEmpty } from "lodash-es";
@@ -24,6 +26,7 @@ interface ListState {
   userLoginStatus: boolean;
   loginType: LoginType;
   userData: UserDataType;
+  userList: AccountType[];
   userLikeData: UserLikeDataType;
   likeSongsList: {
     detail: CoverType;
@@ -67,6 +70,13 @@ const userDB = localforage.createInstance({
   storeName: "user",
 });
 
+// backgroundDB
+const backgroundDB = localforage.createInstance({
+  name: "background-data",
+  description: "Background image data",
+  storeName: "background",
+});
+
 export const useDataStore = defineStore("data", {
   state: (): ListState => ({
     // 播放列表
@@ -92,6 +102,8 @@ export const useDataStore = defineStore("data", {
       vipType: 0,
       name: "",
     },
+    // 用户列表（多账号）
+    userList: [],
     // 用户喜欢数据
     userLikeData: {
       songs: [],
@@ -142,6 +154,7 @@ export const useDataStore = defineStore("data", {
                 "historyList",
                 "cloudPlayList",
                 "localPlayList",
+                "downloadingSongs",
               ].includes(key)
             ) {
               this[key] = data ? markRaw(data) : [];
@@ -157,6 +170,7 @@ export const useDataStore = defineStore("data", {
             }
           }),
         );
+
         // 获取 user-data
         const userDataKeys = await userDB.keys();
         await Promise.all(
@@ -481,11 +495,47 @@ export const useDataStore = defineStore("data", {
         this.downloadingSongs = [...this.downloadingSongs];
       }
     },
+    /**
+     * 保存背景图
+     * @param blob 图片 Blob 数据
+     */
+    async saveBackgroundImage(blob: Blob): Promise<void> {
+      try {
+        await backgroundDB.setItem("image", blob);
+      } catch (error) {
+        console.error("Error saving background image:", error);
+        throw error;
+      }
+    },
+    /**
+     * 获取背景图
+     * @returns Blob 数据
+     */
+    async getBackgroundImage(): Promise<Blob | null> {
+      try {
+        const data = await backgroundDB.getItem<Blob>("image");
+        return data || null;
+      } catch (error) {
+        console.error("Error getting background image:", error);
+        return null;
+      }
+    },
+    /**
+     * 清除背景图
+     */
+    async clearBackgroundImage(): Promise<void> {
+      try {
+        await backgroundDB.removeItem("image");
+      } catch (error) {
+        console.error("Error clearing background image:", error);
+        throw error;
+      }
+    },
   },
   // 持久化
   persist: {
     key: "data-store",
     storage: localStorage,
-    pick: ["userLoginStatus", "loginType", "userData", "searchHistory", "catData"],
+    pick: ["userLoginStatus", "loginType", "userData", "userList", "searchHistory", "catData"],
   },
 });

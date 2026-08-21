@@ -1,4 +1,5 @@
 import { QualityType, SongType, UpdateLogType } from "@/types/main";
+import { AI_AUDIO_LEVELS, AI_AUDIO_KEYS } from "@/utils/meta";
 import { NTooltip, SelectOption } from "naive-ui";
 import { h, VNode } from "vue";
 import { getCacheData } from "./cache";
@@ -160,7 +161,12 @@ export const formatFileSize = (bytes: number): string => {
  */
 export const copyData = async (text: any, message?: string) => {
   if (!text) return;
-  const content = typeof text === "string" ? text.trim() : JSON.stringify(text, null, 2);
+  const content =
+    typeof text === "string"
+      ? text.trim()
+      : Array.isArray(text)
+        ? text.join("\n")
+        : JSON.stringify(text, null, 2);
   if (navigator.clipboard && window.isSecureContext) {
     try {
       await navigator.clipboard.writeText(content);
@@ -299,35 +305,54 @@ const changeLocalPath =
         settingStore[settingsKey].splice(delIndex, 1);
         return;
       }
-      // 添加目录
-      const selectedDir = await window.electron.ipcRenderer.invoke("choose-path", title);
-      if (!selectedDir) return;
-      // 所有需要检查的路径
-      const allPath = [...settingStore[settingsKey]];
-      // 是否是完全相同的路径
-      const isExactMatch = await window.electron.ipcRenderer.invoke(
-        "check-if-same-path",
-        allPath,
-        selectedDir,
-      );
-      if (isExactMatch) {
-        window.$message.error("添加的目录已存在");
-        return;
-      }
-      // 检查是否为子文件夹关系
-      if (includeSubFolders) {
-        const isSubfolder = await window.electron.ipcRenderer.invoke(
-          "check-if-subfolder",
-          allPath,
+      // 添加目录（支持多选）
+      const selectedDirs = await window.electron.ipcRenderer.invoke("choose-path", title, true);
+      if (!selectedDirs || selectedDirs.length === 0) return;
+      // 转换为数组（兼容单选返回字符串的情况）
+      const dirsToAdd = Array.isArray(selectedDirs) ? selectedDirs : [selectedDirs];
+      // 记录成功添加的数量
+      let addedCount = 0;
+      let skippedCount = 0;
+      // 用于追踪本次批量添加中已添加的路径
+      const newlyAddedPaths: string[] = [];
+      for (const selectedDir of dirsToAdd) {
+        // 检查时需要包含原有路径和本次已添加的路径
+        const pathsToCheck = [...settingStore[settingsKey], ...newlyAddedPaths];
+        // 是否是完全相同的路径
+        const isExactMatch = await window.electron.ipcRenderer.invoke(
+          "check-if-same-path",
+          pathsToCheck,
           selectedDir,
         );
-        if (isSubfolder) {
-          window.$message.error("添加的目录与现有目录有重叠，请重新选择");
-          return;
+        if (isExactMatch) {
+          skippedCount++;
+          continue;
         }
+        // 检查是否为子文件夹关系
+        if (includeSubFolders) {
+          const isSubfolder = await window.electron.ipcRenderer.invoke(
+            "check-if-subfolder",
+            pathsToCheck,
+            selectedDir,
+          );
+          if (isSubfolder) {
+            skippedCount++;
+            continue;
+          }
+        }
+        // 通过所有检查，添加目录
+        settingStore[settingsKey].push(selectedDir);
+        newlyAddedPaths.push(selectedDir);
+        addedCount++;
       }
-      // 通过所有检查，添加目录
-      settingStore[settingsKey].push(selectedDir);
+      // 显示结果提示
+      if (addedCount > 0 && skippedCount > 0) {
+        window.$message.success(`成功添加 ${addedCount} 个目录，跳过 ${skippedCount} 个重复目录`);
+      } else if (addedCount > 0) {
+        window.$message.success(`成功添加 ${addedCount} 个目录`);
+      } else if (skippedCount > 0) {
+        window.$message.warning(`所选目录已存在或有重叠，已跳过`);
+      }
     } catch (error) {
       console.error(`${errorConsole}: `, error);
       window.$message.error(errorMessage);
@@ -380,6 +405,9 @@ export const handleSongQuality = (
   song: AnyObject | number,
   type: "local" | "online" = "local",
 ): QualityType | undefined => {
+  const settingStore = useSettingStore();
+  const { disableAiAudio } = settingStore;
+  if (!song) return undefined;
   if (type === "local" && typeof song === "number") {
     if (song >= 960000) return QualityType.HiRes;
     if (song >= 441000) return QualityType.SQ;
@@ -387,26 +415,80 @@ export const handleSongQuality = (
     if (song >= 160000) return QualityType.MQ;
     return QualityType.LQ;
   }
-  // 含有 level 特殊处理
-  if (typeof song === "object" && "level" in song) {
-    if (song.level === "hires") return QualityType.HiRes;
-    if (song.level === "lossless") return QualityType.SQ;
-    if (song.level === "exhigh") return QualityType.HQ;
-    if (song.level === "higher") return QualityType.MQ;
-    if (song.level === "standard") return QualityType.LQ;
-    return undefined;
+
+  const levelQualityMap = {
+    jymaster: QualityType.Master,
+    dolby: QualityType.Dolby,
+    sky: QualityType.Spatial,
+    jyeffect: QualityType.Surround,
+    hires: QualityType.HiRes,
+    lossless: QualityType.SQ,
+    exhigh: QualityType.HQ,
+    higher: QualityType.MQ,
+    standard: QualityType.LQ,
+  };
+
+  // Fuck AI Filter: 如果是 AI 音质，跳过 level 属性判断，让后续遍历逻辑来确定真正的最高音质
+  const isAiLevel =
+    disableAiAudio &&
+    typeof song === "object" &&
+    song &&
+    (("level" in song && AI_AUDIO_LEVELS.includes(song.level)) ||
+      ("privilege" in song &&
+        AI_AUDIO_LEVELS.includes(song.privilege?.playMaxBrLevel ?? song.privilege?.plLevel)));
+
+  if (typeof song === "object" && song && !isAiLevel) {
+    // 含有 level 特殊处理（仅在非 AI 音质时使用）
+    if ("level" in song) {
+      const quality = levelQualityMap[song.level];
+      if (quality) return quality;
+    }
+    // 云盘歌曲适配
+    if ("privilege" in song) {
+      const privilege = song.privilege;
+      const quality =
+        levelQualityMap[privilege?.playMaxBrLevel] ?? levelQualityMap[privilege?.plLevel];
+      if (quality) return quality;
+    }
   }
+
   const order = [
+    { key: "jm", type: QualityType.Master },
+    { key: "db", type: QualityType.Dolby },
+    { key: "sk", type: QualityType.Spatial },
+    { key: "je", type: QualityType.Surround },
     { key: "hr", type: QualityType.HiRes },
     { key: "sq", type: QualityType.SQ },
     { key: "h", type: QualityType.HQ },
     { key: "m", type: QualityType.MQ },
     { key: "l", type: QualityType.LQ },
   ];
+
   for (const itemKey of order) {
+    // 过滤 AI 音质
+    if (disableAiAudio && AI_AUDIO_KEYS.includes(itemKey.key)) {
+      continue;
+    }
     if (song[itemKey.key] && Number(song[itemKey.key].br) > 0) {
       return itemKey.type;
     }
   }
   return undefined;
+};
+
+/**
+ * 获取分享链接
+ * @param type 资源类型 (song, playlist, album, artist, mv, etc.)
+ * @param id 资源 ID
+ * @returns 分享链接
+ */
+export const getShareUrl = (type: string, id: number | string): string => {
+  const settingStore = useSettingStore();
+  const { shareUrlFormat } = settingStore;
+
+  if (shareUrlFormat === "mobile") {
+    return `https://y.music.163.com/m/${type}?id=${id}`;
+  }
+
+  return `https://music.163.com/#/${type}?id=${id}`;
 };
